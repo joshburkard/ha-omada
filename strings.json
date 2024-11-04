@@ -1,0 +1,26 @@
+﻿{
+    "config": {
+        "title": "Omada",
+        "step": {
+            "user": {
+                "title": "Connect to Omada Controller",
+                "data": {
+                    "url": "Controller URL (e.g., https://192.168.1.100:8043)",
+                    "username": "Username",
+                    "password": "Password",
+                    "site_name": "Site Name",
+                    "skip_cert_verify": "Skip Certificate Verification",
+                    "scan_interval": "Update Interval (seconds)"
+                }
+            }
+        },
+        "error": {
+            "cannot_connect": "Failed to connect",
+            "invalid_auth": "Invalid authentication",
+            "unknown": "Unexpected error"
+        },
+        "abort": {
+            "already_configured": "Device is already configured"
+        }
+    }
+}
