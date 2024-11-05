@@ -1,4 +1,4 @@
-﻿# ChangeLog
+# ChangeLog
 
 | Version | Date | Description |
 | --- | --- | --- |

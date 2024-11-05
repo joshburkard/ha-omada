@@ -1,4 +1,4 @@
-﻿"""Constants for the Omada Controller integration."""
+"""Constants for the Omada Controller integration."""
 from datetime import timedelta
 
 DOMAIN = "omada"

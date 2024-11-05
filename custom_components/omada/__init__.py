@@ -1,4 +1,4 @@
-﻿"""The Omada Controller integration."""
+"""The Omada Controller integration."""
 import logging
 from datetime import timedelta
 import requests

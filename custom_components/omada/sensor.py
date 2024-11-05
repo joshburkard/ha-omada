@@ -1,4 +1,4 @@
-﻿"""Sensor platform for Omada Controller."""
+"""Sensor platform for Omada Controller."""
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
