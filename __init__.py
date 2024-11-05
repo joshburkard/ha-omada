@@ -216,6 +216,54 @@ class OmadaAPI:
             _LOGGER.error("Failed to get devices: %s", str(e))
             return []
 
+    def get_clients(self):
+        """Get all clients from Omada Controller."""
+        try:
+            all_clients = []
+            current_page = 1
+            page_size = 10
+            total_rows = None
+
+            while True:
+                url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/clients?currentPage={current_page}&currentPageSize={page_size}&filters.active=true"
+                _LOGGER.debug("Getting clients page %s from %s", current_page, url)
+
+                response = self._make_request("GET", url)
+                if not response or "result" not in response:
+                    break
+
+                # Get total number of rows if we don't have it yet
+                if total_rows is None:
+                    total_rows = response["result"].get("totalRows", 0)
+                    _LOGGER.debug("Total clients to fetch: %s", total_rows)
+
+                # Get current page's data
+                page_data = response["result"].get("data", [])
+                all_clients.extend(page_data)
+
+                # Calculate if we need more pages
+                clients_so_far = len(all_clients)
+                _LOGGER.debug("Fetched %s clients so far out of %s", clients_so_far, total_rows)
+
+                if clients_so_far >= total_rows or not page_data:
+                    break
+
+                current_page += 1
+
+            _LOGGER.debug("Finished fetching all %s clients", len(all_clients))
+            return {
+                "errorCode": 0,
+                "msg": "Success.",
+                "result": {
+                    "totalRows": len(all_clients),
+                    "data": all_clients
+                }
+            }
+
+        except Exception as e:
+            _LOGGER.error("Failed to get clients: %s", str(e))
+            return []
+
 class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Omada data."""
 
@@ -235,6 +283,8 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
             data = {
                 "acl_rules": {},
                 "url_filters": {},
+                "devices": {"data": []},
+                "clients": {"data": []},
             }
 
             # Get ACL rules for different device types
@@ -286,6 +336,61 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                     }
                     filtered_devices.append(filtered_device)
                 data["devices"] = {"data": filtered_devices}
+
+            # Get clients with filtered data
+            clients = await self.hass.async_add_executor_job(
+                self.api.get_clients
+            )
+            if clients and "result" in clients and "data" in clients["result"]:
+                filtered_clients = []
+                for client in clients["result"]["data"]:
+                    filtered_client = {}
+
+                    # Map of fields to include and their validation
+                    fields_to_check = {
+                        "name": str,
+                        "gatewayName": str,
+                        "ip": str,
+                        "mac": str,
+                        "wireless": bool,
+                        "networkName": str,
+                        "uptime": int,
+                        "trafficUp": int,
+                        "trafficDown": int,
+                        "downPacket": int,
+                        "upPacket": int,
+                        "active": bool,
+                        "ssid": str,
+                        "signalLevel": int,
+                        "signalRank": int,
+                        "wifiMode": str,
+                        "apName": str,
+                        "apMac": str,
+                        "radioId": str,
+                        "channel": str,
+                        "rxRate": int,
+                        "txRate": int,
+                        "rssi": int,
+                    }
+
+                    # Only add fields that exist and have valid values
+                    for field, field_type in fields_to_check.items():
+                        value = client.get(field)
+                        if value is not None and value != "" and value != "--":
+                            # Special handling for strings that should not be "--"
+                            if field_type is str and value == "--":
+                                continue
+                            try:
+                                # Try to convert to the expected type
+                                typed_value = field_type(value)
+                                filtered_client[field] = typed_value
+                            except (ValueError, TypeError):
+                                continue
+
+                    if filtered_client:  # Only add if we have valid data
+                        filtered_clients.append(filtered_client)
+
+                data["clients"] = {"data": filtered_clients}
 
             return data
 

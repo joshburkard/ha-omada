@@ -326,6 +326,225 @@ class OmadaDeviceUptimeSensor(OmadaDeviceSensor):
             "uptime_string": self._device_data.get("uptime")
         }
 
+class OmadaClientSensor(CoordinatorEntity, SensorEntity):
+    """Base sensor for Omada client information."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, client_data, sensor_type):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._client_data = client_data
+        self._sensor_type = sensor_type
+        self.entity_category = EntityCategory.DIAGNOSTIC
+
+        # Clean up MAC address for ID
+        self._client_mac = client_data.get("mac", "").replace(':', '').replace('-', '').lower()
+        self._client_name = client_data.get("name", client_data.get("mac", "Unknown"))
+        self._device_unique_id = f"omada_client_{self._client_mac}"
+        self._attr_unique_id = f"{self._device_unique_id}_{sensor_type}"
+
+        # Set entity name
+        self._attr_name = sensor_type.replace('_', ' ').title()
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device information."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device_unique_id)},
+            name=self._client_name,
+            manufacturer="TP-Link",
+            model="Omada Client",
+            via_device=(DOMAIN, "omada_controller"),
+        )
+
+    def _get_updated_data(self):
+        """Get the latest client data."""
+        if not self.coordinator.data.get("clients", {}).get("data"):
+            return None
+
+        for client in self.coordinator.data["clients"]["data"]:
+            if client.get("mac", "").replace(':', '').replace('-', '').lower() == self._client_mac:
+                return client
+        return None
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if updated_data := self._get_updated_data():
+            self._client_data = updated_data
+            self.async_write_ha_state()
+
+class OmadaClientBasicSensor(OmadaClientSensor):
+    """Sensor for basic client information."""
+
+    def __init__(self, coordinator, client_data, sensor_type, attribute):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client_data, sensor_type)
+        self._attribute = attribute
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        return self._client_data.get(self._attribute)
+
+class OmadaClientUptimeSensor(OmadaClientSensor):
+    """Sensor for client uptime."""
+
+    def __init__(self, coordinator, client_data):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client_data, "uptime")
+        self._attr_device_class = SensorDeviceClass.DURATION
+        self._attr_native_unit_of_measurement = UnitOfTime.SECONDS
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        return self._client_data.get("uptime")
+
+class OmadaClientTrafficSensor(OmadaClientSensor):
+    """Sensor for client traffic."""
+
+    def __init__(self, coordinator, client_data, sensor_type, attribute):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client_data, sensor_type)
+        self._attribute = attribute
+
+        # Only add unit for traffic_up and traffic_down
+        if "traffic" in sensor_type:
+            self._attr_native_unit_of_measurement = "MB"
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        value = self._client_data.get(self._attribute)
+        if value is not None and "traffic" in self._sensor_type:
+            # Convert bytes to megabytes
+            return round(value / (1024 * 1024), 2)
+        return value
+
+class OmadaClientSignalSensor(OmadaClientSensor):
+    """Sensor for client signal information."""
+
+    def __init__(self, coordinator, client_data, sensor_type, attribute):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client_data, sensor_type)
+        self._attribute = attribute
+
+        if sensor_type == "rssi":
+            self._attr_native_unit_of_measurement = "dBm"
+        elif "rate" in sensor_type:
+            self._attr_native_unit_of_measurement = "Kbit/s"
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        return self._client_data.get(self._attribute)
+
+class OmadaClientWifiModeSensor(OmadaClientSensor):
+    """Sensor for WiFi mode information."""
+
+    WIFI_MODE_MAP = {
+        0: "11a",
+        1: "11b",
+        2: "11g",
+        3: "11na",
+        4: "11ng",
+        5: "11ac",
+        6: "11axa",
+        7: "11axg",
+        8: "11beg",
+        9: "11bea"
+    }
+
+    def __init__(self, coordinator, client_data, sensor_type, attribute):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client_data, sensor_type)
+        self._attribute = attribute
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        mode = self._client_data.get(self._attribute)
+        if mode is not None:
+            try:
+                return self.WIFI_MODE_MAP.get(int(mode), f"Unknown ({mode})")
+            except (ValueError, TypeError):
+                return f"Unknown ({mode})"
+        return None
+
+class OmadaClientRadioSensor(OmadaClientSensor):
+    """Sensor for Radio Type information."""
+
+    RADIO_TYPE_MAP = {
+        0: "2.4 GHz",
+        1: "5 GHz(1)",
+        2: "5 GHz(2)",
+        3: "6 GHz"
+    }
+
+    def __init__(self, coordinator, client_data, sensor_type, attribute):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client_data, sensor_type)
+        self._attribute = attribute
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        radio_id = self._client_data.get(self._attribute)
+        if radio_id is not None:
+            try:
+                return self.RADIO_TYPE_MAP.get(int(radio_id), f"Unknown ({radio_id})")
+            except (ValueError, TypeError):
+                return f"Unknown ({radio_id})"
+        return None
+
+def create_client_sensors(coordinator, client):
+    """Create sensors for a client based on available data."""
+    sensors = []
+
+    # Map of sensor definitions: (sensor_class, name, attribute)
+    sensor_definitions = [
+        (OmadaClientBasicSensor, "name", "name"),
+        (OmadaClientBasicSensor, "gateway_name", "gatewayName"),
+        (OmadaClientBasicSensor, "ip_address", "ip"),
+        (OmadaClientBasicSensor, "mac_address", "mac"),
+        (OmadaClientBasicSensor, "wireless", "wireless"),
+        (OmadaClientBasicSensor, "network_name", "networkName"),
+        (OmadaClientBasicSensor, "ssid", "ssid"),
+        (OmadaClientSignalSensor, "signal_level", "signalLevel"),
+        (OmadaClientBasicSensor, "signal_rank", "signalRank"),
+        (OmadaClientWifiModeSensor, "wifi_mode", "wifiMode"),
+        (OmadaClientBasicSensor, "ap_name", "apName"),
+        (OmadaClientBasicSensor, "ap_mac", "apMac"),
+        (OmadaClientRadioSensor, "radio_type", "radioId"),
+        (OmadaClientBasicSensor, "channel", "channel"),
+        (OmadaClientSignalSensor, "rx_rate", "rxRate"),
+        (OmadaClientSignalSensor, "tx_rate", "txRate"),
+        (OmadaClientSignalSensor, "rssi", "rssi"),
+        (OmadaClientUptimeSensor, "uptime", None),
+        (OmadaClientTrafficSensor, "traffic_up", "trafficUp"),
+        (OmadaClientTrafficSensor, "traffic_down", "trafficDown"),
+        (OmadaClientTrafficSensor, "packets_down", "downPacket"),
+        (OmadaClientTrafficSensor, "packets_up", "upPacket"),
+        (OmadaClientBasicSensor, "active", "active"),
+    ]
+
+    for sensor_class, name, attribute in sensor_definitions:
+        # Skip if the attribute doesn't exist in client data
+        if attribute is not None and attribute not in client:
+            continue
+
+        # Special handling for UptimeSensor which doesn't need an attribute
+        if sensor_class == OmadaClientUptimeSensor:
+            if "uptime" in client:
+                sensors.append(sensor_class(coordinator, client))
+        else:
+            sensors.append(sensor_class(coordinator, client, name, attribute))
+
+    return sensors
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -372,6 +591,11 @@ async def async_setup_entry(
                 OmadaDeviceBasicSensor(coordinator, device, "public_ip", "publicIp"),
                 OmadaDeviceUptimeSensor(coordinator, device)
             ])
+
+    # Create sensors for clients
+    if coordinator.data.get("clients", {}).get("data"):
+        for client in coordinator.data["clients"]["data"]:
+            entities.extend(create_client_sensors(coordinator, client))
 
     async_add_entities(entities)
     return True
