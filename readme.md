@@ -6,6 +6,7 @@ This is a custom component for Home Assistant
 
 this custom component will get several entities from a Omada Controller and present it to Home Assistant as devices:
 
+- Clients
 - Devices
 - ACL's
 - URL Filtering's
