@@ -1,24 +1,32 @@
 ﻿# Omada
 
-## Description
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 
-This is a custom component for Home Assistant
+Adds Omada SDN Controller support to Home assistant. This integration requires [HACS](https://hacs.xyz).
 
-this custom component will get several entities from a Omada Controller and present it to Home Assistant as devices:
+## Features
 
-- Clients
-- Devices
-- ACL's
-- URL Filtering's
+this features are already integrated:
 
-ACL's and URL-Filterings can be enabled and disabled
+- Clients with a lot of sensors
+- Devices with a lot of sensors
+- ACL Toggle
+- URL Filtering Toggle
 
 ## Setup
 
-- copy all files and folders in your HA installation to /custom_components/omada
-- restart Home Assistant
-- go to Settings --> Devices & Services --> add Integration --> select Omada
-- fill in the needed fields
+Recommended to be installed via [HACS](https://github.com/hacs/integration)
+
+1. Go to HACS -> Integrations
+2. [Add this repo to your HACS custom repositories](https://hacs.xyz/docs/faq/custom_repositories)
+3. Search for Omada and install.
+4. Restart Home Assistant
+5. Open Home Assistant Settings -> Devices & Serivces
+6. Shift+reload your browser to clear config flow caches.
+7. Click ADD INTEGRATION
+8. Search for Omada
+9. Enter the URL you use to access your Omada SDN, the username you would like HA to connect with, and its password, also define the Site-Name and the Refreshing Interval.
+10. If no errors occur, you're all set! Otherwise, feel free to browse the issue track or open a new issue to help resolve the issue.
 
 ## Notes
 
