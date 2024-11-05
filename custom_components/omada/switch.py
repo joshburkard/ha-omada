@@ -19,7 +19,7 @@ _LOGGER = logging.getLogger(__name__)
 class OmadaBaseSwitch(CoordinatorEntity, SwitchEntity):
     """Base class for Omada switches."""
 
-    _attr_has_entity_name = False
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, device_data, device_type, rule_type, switch_type):
         """Initialize the switch."""
