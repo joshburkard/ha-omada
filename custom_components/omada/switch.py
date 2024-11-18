@@ -22,13 +22,12 @@ class OmadaBaseSwitch(CoordinatorEntity, SwitchEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, device_data, device_type, rule_type, switch_type):
+    def __init__(self, coordinator, device_data, device_type, rule_type):
         """Initialize the switch."""
         super().__init__(coordinator)
         self._device_data = device_data
         self._device_type = device_type
         self._rule_type = rule_type
-        self._switch_type = switch_type
         self.entity_category = EntityCategory.CONFIG
 
         # Get device type name
@@ -50,10 +49,10 @@ class OmadaBaseSwitch(CoordinatorEntity, SwitchEntity):
 
         # Create unique IDs for device and entity
         self._device_unique_id = f"omada_{self._rule_type}_{self._device_id}"
-        self._attr_unique_id = f"{self._device_unique_id}_{switch_type}"
+        self._attr_unique_id = f"{self._device_unique_id}_enabled"
 
         # Set entity name
-        self._attr_name = switch_type
+        self._attr_name = "Enabled"
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -114,10 +113,6 @@ class OmadaBaseSwitch(CoordinatorEntity, SwitchEntity):
 class OmadaEnabledSwitch(OmadaBaseSwitch):
     """Representation of an Omada enabled switch."""
 
-    def __init__(self, coordinator, device_data, device_type, rule_type):
-        """Initialize the enabled switch."""
-        super().__init__(coordinator, device_data, device_type, rule_type, "enabled")
-
     @property
     def is_on(self) -> bool:
         """Return true if the switch is on."""
@@ -161,33 +156,38 @@ async def async_setup_entry(
 ) -> bool:
     """Set up switches from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-
     entities = []
 
-    # Create switches for ACL rules
-    _LOGGER.debug("Processing ACL rules")
-    for device_type, rules in coordinator.data.get("acl_rules", {}).items():
-        _LOGGER.debug("Found ACL rules for device type %s: %s", device_type, rules)
-        if isinstance(rules, list):
-            for rule in rules:
-                _LOGGER.debug("Creating switches for ACL rule: %s", rule)
-                entities.extend([
-                    OmadaEnabledSwitch(coordinator, rule, device_type, "acl")
-                ])
+    @callback
+    def update_entities():
+        """Update entities with new ACL rules and URL filters."""
+        new_entities = []
 
-    # Create switches for URL filters
-    _LOGGER.debug("Processing URL filters")
-    for filter_type, filters in coordinator.data.get("url_filters", {}).items():
-        _LOGGER.debug("Found URL filters for type %s: %s", filter_type, filters)
-        if isinstance(filters, list):
-            for filter_rule in filters:
-                _LOGGER.debug("Creating switches for URL filter: %s", filter_rule)
-                entities.extend([
-                    OmadaEnabledSwitch(coordinator, filter_rule, filter_type, "url_filter")
-                ])
+        # Create switches for ACL rules
+        for device_type, rules in coordinator.data.get("acl_rules", {}).items():
+            if isinstance(rules, list):
+                for rule in rules:
+                    # Check if switch already exists
+                    switch_unique_id = f"omada_acl_{rule.get('name')}_{device_type}_enabled"
+                    if not any(entity.unique_id == switch_unique_id for entity in entities):
+                        _LOGGER.debug("Creating new switch for ACL rule: %s", rule.get('name'))
+                        new_entities.append(OmadaEnabledSwitch(coordinator, rule, device_type, "acl"))
 
-    if entities:
-        _LOGGER.debug("Adding %d switch entities", len(entities))
-        async_add_entities(entities)
+        # Create switches for URL filters
+        for filter_type, filters in coordinator.data.get("url_filters", {}).items():
+            if isinstance(filters, list):
+                for filter_rule in filters:
+                    # Check if switch already exists
+                    switch_unique_id = f"omada_url_filter_{filter_rule.get('name')}_{filter_type}_enabled"
+                    if not any(entity.unique_id == switch_unique_id for entity in entities):
+                        _LOGGER.debug("Creating new switch for URL filter: %s", filter_rule.get('name'))
+                        new_entities.append(OmadaEnabledSwitch(coordinator, filter_rule, filter_type, "url_filter"))
 
+        # Add any new entities found
+        if new_entities:
+            entities.extend(new_entities)
+            async_add_entities(new_entities)
+
+    coordinator.async_add_listener(update_entities)
+    update_entities()
     return True

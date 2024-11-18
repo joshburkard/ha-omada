@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.1.00004 | 18/11/2024 | ACL Rules and URL Filterings are automatically created and removed if needed while normal update process |
 | 0.1.00003 | 18/11/2024 | ACL Rules and URL Filterings sensors are displayed again, removed Disabled switch again to prevent confusion |
 | 0.1.00002 | 18/11/2024 | ACL Rules and URL Filterings are removed at integration reload if not available anymore |
 | 0.1.00001 | 18/11/2024 | added DEvice Tracker for Omada Devices and Omada Clients |
