@@ -154,49 +154,6 @@ class OmadaEnabledSwitch(OmadaBaseSwitch):
 
             await self.coordinator.async_refresh()
 
-class OmadaDisabledSwitch(OmadaBaseSwitch):
-    """Representation of an Omada disabled switch."""
-
-    def __init__(self, coordinator, device_data, device_type, rule_type):
-        """Initialize the disabled switch."""
-        super().__init__(coordinator, device_data, device_type, rule_type, "disabled")
-
-    @property
-    def is_on(self) -> bool:
-        """Return true if the switch is on (rule is disabled)."""
-        if data := self._get_updated_data():
-            return not bool(data.get("status", False))
-        return True
-
-    async def async_turn_on(self, **kwargs) -> None:
-        """Turn the switch on (disable the rule)."""
-        await self._update_rule_state(False)
-
-    async def async_turn_off(self, **kwargs) -> None:
-        """Turn the switch off (enable the rule)."""
-        await self._update_rule_state(True)
-
-    async def _update_rule_state(self, enable: bool) -> None:
-        """Update the rule state."""
-        if data := self._get_updated_data():
-            payload = dict(data)
-            payload["status"] = enable
-
-            if self._rule_type == "acl":
-                await self.hass.async_add_executor_job(
-                    self.coordinator.api.update_acl_rule,
-                    data["id"],
-                    payload
-                )
-            else:  # url_filter
-                await self.hass.async_add_executor_job(
-                    self.coordinator.api.update_url_filter,
-                    data["id"],
-                    payload
-                )
-
-            await self.coordinator.async_refresh()
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -215,8 +172,7 @@ async def async_setup_entry(
             for rule in rules:
                 _LOGGER.debug("Creating switches for ACL rule: %s", rule)
                 entities.extend([
-                    OmadaEnabledSwitch(coordinator, rule, device_type, "acl"),
-                    OmadaDisabledSwitch(coordinator, rule, device_type, "acl")
+                    OmadaEnabledSwitch(coordinator, rule, device_type, "acl")
                 ])
 
     # Create switches for URL filters
@@ -227,8 +183,7 @@ async def async_setup_entry(
             for filter_rule in filters:
                 _LOGGER.debug("Creating switches for URL filter: %s", filter_rule)
                 entities.extend([
-                    OmadaEnabledSwitch(coordinator, filter_rule, filter_type, "url_filter"),
-                    OmadaDisabledSwitch(coordinator, filter_rule, filter_type, "url_filter")
+                    OmadaEnabledSwitch(coordinator, filter_rule, filter_type, "url_filter")
                 ])
 
     if entities:

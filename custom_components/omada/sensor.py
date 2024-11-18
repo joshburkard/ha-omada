@@ -483,6 +483,82 @@ class OmadaClientRadioSensor(OmadaClientSensor):
                 return f"Unknown ({radio_id})"
         return None
 
+class OmadaACLRuleSensor(OmadaBaseSensor):
+    """Sensor for ACL rule information."""
+
+    def __init__(self, coordinator, rule_data, device_type, attribute):
+        """Initialize the ACL rule sensor."""
+        super().__init__(coordinator, rule_data, device_type, "acl", attribute)
+        self._attribute = attribute
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if not self._device_data:
+            return None
+
+        value = self._device_data.get(self._attribute)
+        if self._attribute == "policy":
+            # Convert policy values
+            policy_map = {0: "Deny", 1: "Permit"}
+            return policy_map.get(value, f"Unknown ({value})")
+        elif self._attribute == "protocols":
+            # Convert protocol values
+            if isinstance(value, list):
+                protocol_map = {1: "ICMP", 6: "TCP", 17: "UDP", 256: "ALL"}
+                return ", ".join(protocol_map.get(p, f"Protocol {p}") for p in value)
+        return value
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        attrs = {
+            "rule_type": "ACL",
+            "device_type": DEVICE_TYPE_NAMES.get(self._device_type, self._device_type)
+        }
+
+        # Add raw values for certain attributes
+        if self._attribute in ["policy", "protocols"]:
+            attrs["raw_value"] = self._device_data.get(self._attribute)
+
+        return attrs
+
+class OmadaURLFilterSensor(OmadaBaseSensor):
+    """Sensor for URL filter information."""
+
+    def __init__(self, coordinator, filter_data, filter_type, attribute):
+        """Initialize the URL filter sensor."""
+        super().__init__(coordinator, filter_data, filter_type, "url_filter", attribute)
+        self._attribute = attribute
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if not self._device_data:
+            return None
+
+        value = self._device_data.get(self._attribute)
+        if self._attribute == "status":
+            return "Enabled" if value else "Disabled"
+        elif self._attribute == "mode":
+            mode_map = {0: "Block Listed", 1: "Allow Listed"}
+            return mode_map.get(value, f"Unknown ({value})")
+        return value
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        attrs = {
+            "rule_type": "URL Filter",
+            "filter_type": self._device_type
+        }
+
+        # Add URLs if they exist
+        if "urls" in self._device_data:
+            attrs["urls"] = self._device_data["urls"]
+
+        return attrs
+
 def create_client_sensors(coordinator, client):
     """Create sensors for a client based on available data."""
     sensors = []
@@ -547,32 +623,45 @@ def create_device_sensors(coordinator, device):
             sensors.append(sensor_class(coordinator, device, name, attribute))
     return sensors
 
-def create_url_filter_sensors(coordinator, url_filter):
-    """Create sensors for a URL filter based on available data."""
-    sensors = []
-    sensor_definitions = [
-        (OmadaBaseSensor, "url_filter_name", "name"),
-        (OmadaBaseSensor, "url_filter_status", "status"),
-        # Add more URL filter sensors as needed
-    ]
-    for sensor_class, name, attribute in sensor_definitions:
-        if attribute is not None and attribute not in url_filter:
-            continue
-        sensors.append(sensor_class(coordinator, url_filter, "url_filter", "url_filter", name))
-    return sensors
 
-def create_acl_rule_sensors(coordinator, acl_rule):
+def create_acl_rule_sensors(coordinator, rule, device_type):
     """Create sensors for an ACL rule based on available data."""
     sensors = []
+
+    # Define available sensors and their corresponding attributes
     sensor_definitions = [
-        (OmadaBaseSensor, "acl_rule_name", "name"),
-        (OmadaBaseSensor, "acl_rule_status", "status"),
-        # Add more ACL rule sensors as needed
+        (OmadaACLRuleSensor, "name", "name"),
+        (OmadaACLRuleSensor, "policy", "policy"),
+        (OmadaACLRuleSensor, "protocols", "protocols"),
+        (OmadaACLRuleSensor, "src_ip", "srcIp"),
+        (OmadaACLRuleSensor, "dst_ip", "dstIp"),
+        (OmadaACLRuleSensor, "src_port", "srcPort"),
+        (OmadaACLRuleSensor, "dst_port", "dstPort"),
+        (OmadaACLRuleSensor, "status", "status")
     ]
+
     for sensor_class, name, attribute in sensor_definitions:
-        if attribute is not None and attribute not in acl_rule:
-            continue
-        sensors.append(sensor_class(coordinator, acl_rule, "acl", "acl", name))
+        if attribute in rule:
+            sensors.append(sensor_class(coordinator, rule, device_type, attribute))
+
+    return sensors
+
+def create_url_filter_sensors(coordinator, filter_rule, filter_type):
+    """Create sensors for a URL filter based on available data."""
+    sensors = []
+
+    # Define available sensors and their corresponding attributes
+    sensor_definitions = [
+        (OmadaURLFilterSensor, "name", "name"),
+        (OmadaURLFilterSensor, "status", "status"),
+        (OmadaURLFilterSensor, "mode", "mode"),
+        (OmadaURLFilterSensor, "description", "description")
+    ]
+
+    for sensor_class, name, attribute in sensor_definitions:
+        if attribute in filter_rule:
+            sensors.append(sensor_class(coordinator, filter_rule, filter_type, attribute))
+
     return sensors
 
 async def async_setup_entry(
@@ -597,13 +686,15 @@ async def async_setup_entry(
         for device in coordinator.data.get("devices", {}).get("data", []):
             new_entities.extend(create_device_sensors(coordinator, device))
 
-        # Create sensors for URL filters
-        for url_filter in coordinator.data.get("url_filters", {}).get("data", []):
-            new_entities.extend(create_url_filter_sensors(coordinator, url_filter))
-
         # Create sensors for ACL rules
-        for acl_rule in coordinator.data.get("acl_rules", {}).get("data", []):
-            new_entities.extend(create_acl_rule_sensors(coordinator, acl_rule))
+        for device_type, rules in coordinator.data.get("acl_rules", {}).items():
+            for rule in rules:
+                new_entities.extend(create_acl_rule_sensors(coordinator, rule, device_type))
+
+        # Create sensors for URL filters
+        for filter_type, filters in coordinator.data.get("url_filters", {}).items():
+            for filter_rule in filters:
+                new_entities.extend(create_url_filter_sensors(coordinator, filter_rule, filter_type))
 
         async_add_entities(new_entities)
 
