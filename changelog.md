@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.0.5 | 17/11/2024 | fixing issues with creating / updating Omada Devices and Omada Clients |
 | 0.0.4 | 05/11/2024 | acl / url filtering switch names |
 | 0.0.3 | 05/11/2024 | restructured for HACS installation |
 | 0.0.2 | 05/11/2024 | added clients |
