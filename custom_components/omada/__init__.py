@@ -17,6 +17,11 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
+from homeassistant.helpers.entity_registry import (
+    async_get as er_async_get,
+    async_entries_for_config_entry
+)
+from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN, CONF_SITE_NAME, CONF_SKIP_CERT_VERIFY, DEFAULT_UPDATE_INTERVAL
 
@@ -276,6 +281,45 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=update_interval,
         )
         self.api = api
+        self._entity_registry = er_async_get(self.hass)
+        self._device_registry = dr.async_get(self.hass)
+        self._pending_removals = set()
+
+    async def trigger_removal(self, entity_id: str, device_id: str):
+        """Trigger removal of an entity and possibly its device."""
+        if entity_id in self._pending_removals:
+            return
+
+        self._pending_removals.add(entity_id)
+
+        try:
+            # Remove the entity
+            _LOGGER.debug("Removing entity %s", entity_id)
+            self._entity_registry.async_remove(entity_id)
+
+            # Check if we should remove the device
+            device = self._device_registry.async_get_device({(DOMAIN, device_id)})
+            if device:
+                # Get all entities for this device
+                entities = [
+                    entry.entity_id
+                    for entry in self._entity_registry.entities.values()
+                    if entry.device_id == device.id
+                ]
+
+                # Remove remaining entities for this device
+                for ent_id in entities:
+                    if ent_id != entity_id:  # Skip the one we just removed
+                        self._entity_registry.async_remove(ent_id)
+
+                # Remove the device
+                _LOGGER.debug("Removing device %s", device_id)
+                self._device_registry.async_remove_device(device.id)
+
+        except Exception as err:
+            _LOGGER.error("Error removing entity/device: %s", str(err))
+        finally:
+            self._pending_removals.discard(entity_id)
 
     async def _async_update_data(self):
         """Fetch data from API."""
@@ -287,7 +331,7 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                 "clients": {"data": []},
             }
 
-            # Get ACL rules for different device types
+            # Get ACL rules
             for device_type in [0, 1, 2]:  # Gateway, Switch, EAP
                 _LOGGER.debug("Fetching ACL rules for device type %s", device_type)
                 rules = await self.hass.async_add_executor_job(
@@ -296,7 +340,6 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                 if rules and "result" in rules and "data" in rules["result"]:
                     data["acl_rules"][device_type] = rules["result"]["data"]
                 else:
-                    _LOGGER.debug("No ACL rules found for device type %s", device_type)
                     data["acl_rules"][device_type] = []
 
             # Get URL filters
@@ -308,95 +351,72 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                 if filters and "result" in filters and "data" in filters["result"]:
                     data["url_filters"][filter_type] = filters["result"]["data"]
                 else:
-                    _LOGGER.debug("No URL filters found for type %s", filter_type)
                     data["url_filters"][filter_type] = []
 
-            # Get devices with filtered data
+            # Get devices data
             devices = await self.hass.async_add_executor_job(
                 self.api.get_devices
             )
             if devices and "result" in devices and "data" in devices["result"]:
-                # Filter device data to include only the fields we want
-                filtered_devices = []
-                for device in devices["result"]["data"]:
-                    filtered_device = {
-                        "type": device.get("type"),
-                        "name": device.get("name"),
-                        "mac": device.get("mac"),
-                        "model": device.get("model"),
-                        "showModel": device.get("showModel"),
-                        "modelVersion": device.get("modelVersion"),
-                        "firmwareVersion": device.get("firmwareVersion"),
-                        "version": device.get("version"),
-                        "hwVersion": device.get("hwVersion"),
-                        "ip": device.get("ip"),
-                        "publicIp": device.get("publicIp"),
-                        "uptime": device.get("uptime"),
-                        "uptimeLong": device.get("uptimeLong"),
-                    }
-                    filtered_devices.append(filtered_device)
-                data["devices"] = {"data": filtered_devices}
+                data["devices"] = {"data": devices["result"]["data"]}
 
-            # Get clients with filtered data
+            # Get clients data
             clients = await self.hass.async_add_executor_job(
                 self.api.get_clients
             )
             if clients and "result" in clients and "data" in clients["result"]:
-                filtered_clients = []
-                for client in clients["result"]["data"]:
-                    filtered_client = {}
+                data["clients"] = {"data": clients["result"]["data"]}
 
-                    # Map of fields to include and their validation
-                    fields_to_check = {
-                        "name": str,
-                        "gatewayName": str,
-                        "ip": str,
-                        "mac": str,
-                        "wireless": bool,
-                        "networkName": str,
-                        "uptime": int,
-                        "trafficUp": int,
-                        "trafficDown": int,
-                        "downPacket": int,
-                        "upPacket": int,
-                        "active": bool,
-                        "ssid": str,
-                        "signalLevel": int,
-                        "signalRank": int,
-                        "wifiMode": str,
-                        "apName": str,
-                        "apMac": str,
-                        "radioId": str,
-                        "channel": str,
-                        "rxRate": int,
-                        "txRate": int,
-                        "rssi": int,
-                    }
-
-                    # Only add fields that exist and have valid values
-                    for field, field_type in fields_to_check.items():
-                        value = client.get(field)
-                        if value is not None and value != "" and value != "--":
-                            # Special handling for strings that should not be "--"
-                            if field_type is str and value == "--":
-                                continue
-                            try:
-                                # Try to convert to the expected type
-                                typed_value = field_type(value)
-                                filtered_client[field] = typed_value
-                            except (ValueError, TypeError):
-                                continue
-
-                    if filtered_client:  # Only add if we have valid data
-                        filtered_clients.append(filtered_client)
-
-                data["clients"] = {"data": filtered_clients}
+            await self._check_missing_entities(data)
 
             return data
 
         except Exception as err:
             _LOGGER.error("Error communicating with API: %s", str(err))
             raise UpdateFailed(f"Error communicating with API: {err}")
+
+    async def _check_missing_entities(self, data):
+        """Check and remove entities that no longer exist in the data."""
+        # Build set of current valid entity IDs
+        current_entities = set()
+
+        # Add ACL rule entities
+        for device_type, rules in data["acl_rules"].items():
+            for rule in rules:
+                if "name" in rule:
+                    base_id = f"omada_acl_{rule['name']}_{device_type}"
+                    current_entities.add(f"switch.{base_id}_enabled")
+                    current_entities.add(f"switch.{base_id}_disabled")
+
+        # Add URL filter entities
+        for filter_type, filters in data["url_filters"].items():
+            for filter_rule in filters:
+                if "name" in filter_rule:
+                    base_id = f"omada_url_filter_{filter_rule['name']}_{filter_type}"
+                    current_entities.add(f"switch.{base_id}_enabled")
+                    current_entities.add(f"switch.{base_id}_disabled")
+
+        # Check all entities and remove those that don't exist anymore
+        for entry in self._entity_registry.entities.values():
+            if (entry.domain == "switch" and
+                (entry.entity_id.startswith("switch.omada_acl_") or
+                 entry.entity_id.startswith("switch.omada_url_filter_"))):
+
+                if entry.entity_id not in current_entities:
+                    device_id = None
+                    if entry.device_id:
+                        device = self._device_registry.async_get_device(
+                            identifiers=None, connections=None, device_id=entry.device_id
+                        )
+                        if device:
+                            # Get the Omada-specific identifier
+                            for identifier in device.identifiers:
+                                if identifier[0] == DOMAIN:
+                                    device_id = identifier[1]
+                                    break
+
+                    if device_id:
+                        await self.trigger_removal(entry.entity_id, device_id)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Omada Controller from a config entry."""

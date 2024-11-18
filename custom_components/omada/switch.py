@@ -1,11 +1,12 @@
 """Switch platform for Omada Controller."""
+from __future__ import annotations
+
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-import asyncio
 
 from .const import (
     DOMAIN,
@@ -57,7 +58,6 @@ class OmadaBaseSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information about this entity."""
-        # Get device type name for model
         if isinstance(self._device_type, int):
             device_type_name = DEVICE_TYPE_NAMES.get(self._device_type, str(self._device_type))
         else:
@@ -65,7 +65,6 @@ class OmadaBaseSwitch(CoordinatorEntity, SwitchEntity):
 
         # Format model name based on rule type
         if self._rule_type == "url_filter":
-            # Convert 'ap' to 'EAP' for URL filtering
             if device_type_name.lower() == 'ap':
                 model_name = f"Omada EAP URL-Filtering"
             else:
@@ -83,121 +82,48 @@ class OmadaBaseSwitch(CoordinatorEntity, SwitchEntity):
 
     def _get_updated_data(self):
         """Get the latest data for this rule."""
+        data = None
         if self._rule_type == "acl":
-            for rule in self.coordinator.data["acl_rules"].get(self._device_type, []):
-                if (
-                    rule.get("id") == self._device_data.get("id") or
-                    (
-                        "name" in rule and
-                        "name" in self._device_data and
-                        rule["name"] == self._device_data["name"]
-                    )
-                ):
-                    return rule
+            rules = self.coordinator.data.get("acl_rules", {}).get(self._device_type, [])
+            for rule in rules:
+                if (rule.get("id") == self._device_data.get("id") or
+                        ("name" in rule and "name" in self._device_data and
+                         rule["name"] == self._device_data["name"])):
+                    data = rule
+                    break
         elif self._rule_type == "url_filter":
-            for rule in self.coordinator.data["url_filters"].get(self._device_type, []):
-                if (
-                    rule.get("id") == self._device_data.get("id") or
-                    (
-                        "name" in rule and
-                        "name" in self._device_data and
-                        rule["name"] == self._device_data["name"]
-                    )
-                ):
-                    return rule
-        return None
+            rules = self.coordinator.data.get("url_filters", {}).get(self._device_type, [])
+            for rule in rules:
+                if (rule.get("id") == self._device_data.get("id") or
+                        ("name" in rule and "name" in self._device_data and
+                         rule["name"] == self._device_data["name"])):
+                    data = rule
+                    break
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        if updated_data := self._get_updated_data():
-            _LOGGER.debug(
-                "Updating switch state for %s with data: %s",
-                self._device_name,
-                updated_data
-            )
-            self._device_data = updated_data
-            self.async_write_ha_state()
-        else:
-            _LOGGER.warning(
-                "Could not find updated data for %s rule %s in coordinator data",
-                self._rule_type,
-                self._device_name
-            )
+        if not data and hasattr(self.coordinator, 'trigger_removal'):
+            self.coordinator.trigger_removal(self.entity_id, self._device_unique_id)
 
+        return data
 
-    async def _update_rule_state(self, enable: bool) -> None:
-        """Update the rule state."""
-        try:
-            # Create payload based on current device data
-            payload = dict(self._device_data)
-            payload["status"] = enable
-
-            # Make sure we have the required fields
-            if self._rule_type == "acl":
-                payload.update({
-                    "type": self._device_type,
-                    "siteId": self.coordinator.api.site_id,
-                })
-            else:  # url_filter
-                payload.update({
-                    "type": self._device_type,  # "gateway" or "ap"
-                    "siteId": self.coordinator.api.site_id,
-                })
-
-            # Remove any None values from payload
-            payload = {k: v for k, v in payload.items() if v is not None}
-
-            _LOGGER.debug("Updating %s rule %s with payload: %s",
-                         self._rule_type, self._device_name, payload)
-
-            # Make the API call
-            if self._rule_type == "acl":
-                success = await self.hass.async_add_executor_job(
-                    self.coordinator.api.update_acl_rule,
-                    self._device_data["id"],
-                    payload
-                )
-            else:  # url_filter
-                success = await self.hass.async_add_executor_job(
-                    self.coordinator.api.update_url_filter,
-                    self._device_data["id"],
-                    payload
-                )
-
-            if success:
-                # Update local state immediately
-                self._device_data["status"] = enable
-                self.async_write_ha_state()
-
-                # Schedule a delayed update after 1 second
-                async def delayed_update():
-                    await asyncio.sleep(1)
-                    await self.coordinator.async_refresh()
-
-                # Create and start the delayed update task
-                self.hass.async_create_task(delayed_update())
-
-            else:
-                _LOGGER.error("Failed to update %s rule state for %s",
-                            self._rule_type, self._device_name)
-
-        except Exception as err:
-            _LOGGER.error("Failed to update %s rule state for %s: %s",
-                         self._rule_type, self._device_name, err)
-            raise
+    async def async_will_remove_from_hass(self) -> None:
+        """Handle entity being removed from Home Assistant."""
+        await super().async_will_remove_from_hass()
+        if hasattr(self.coordinator, 'trigger_removal'):
+            await self.coordinator.trigger_removal(self.entity_id, self._device_unique_id)
 
 class OmadaEnabledSwitch(OmadaBaseSwitch):
     """Representation of an Omada enabled switch."""
 
     def __init__(self, coordinator, device_data, device_type, rule_type):
         """Initialize the enabled switch."""
-        super().__init__(coordinator, device_data, device_type, rule_type, "Enabled")
+        super().__init__(coordinator, device_data, device_type, rule_type, "enabled")
 
     @property
     def is_on(self) -> bool:
         """Return true if the switch is on."""
-        return bool(self._device_data.get("status", False))
+        if data := self._get_updated_data():
+            return bool(data.get("status", False))
+        return False
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the switch on."""
@@ -207,17 +133,40 @@ class OmadaEnabledSwitch(OmadaBaseSwitch):
         """Turn the switch off."""
         await self._update_rule_state(False)
 
+    async def _update_rule_state(self, enable: bool) -> None:
+        """Update the rule state."""
+        if data := self._get_updated_data():
+            payload = dict(data)
+            payload["status"] = enable
+
+            if self._rule_type == "acl":
+                await self.hass.async_add_executor_job(
+                    self.coordinator.api.update_acl_rule,
+                    data["id"],
+                    payload
+                )
+            else:  # url_filter
+                await self.hass.async_add_executor_job(
+                    self.coordinator.api.update_url_filter,
+                    data["id"],
+                    payload
+                )
+
+            await self.coordinator.async_refresh()
+
 class OmadaDisabledSwitch(OmadaBaseSwitch):
     """Representation of an Omada disabled switch."""
 
     def __init__(self, coordinator, device_data, device_type, rule_type):
         """Initialize the disabled switch."""
-        super().__init__(coordinator, device_data, device_type, rule_type, "Disabled")
+        super().__init__(coordinator, device_data, device_type, rule_type, "disabled")
 
     @property
     def is_on(self) -> bool:
         """Return true if the switch is on (rule is disabled)."""
-        return not bool(self._device_data.get("status", False))
+        if data := self._get_updated_data():
+            return not bool(data.get("status", False))
+        return True
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn the switch on (disable the rule)."""
@@ -227,6 +176,27 @@ class OmadaDisabledSwitch(OmadaBaseSwitch):
         """Turn the switch off (enable the rule)."""
         await self._update_rule_state(True)
 
+    async def _update_rule_state(self, enable: bool) -> None:
+        """Update the rule state."""
+        if data := self._get_updated_data():
+            payload = dict(data)
+            payload["status"] = enable
+
+            if self._rule_type == "acl":
+                await self.hass.async_add_executor_job(
+                    self.coordinator.api.update_acl_rule,
+                    data["id"],
+                    payload
+                )
+            else:  # url_filter
+                await self.hass.async_add_executor_job(
+                    self.coordinator.api.update_url_filter,
+                    data["id"],
+                    payload
+                )
+
+            await self.coordinator.async_refresh()
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -234,23 +204,35 @@ async def async_setup_entry(
 ) -> bool:
     """Set up switches from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+
     entities = []
 
     # Create switches for ACL rules
-    for device_type, rules in coordinator.data["acl_rules"].items():
-        for rule in rules:
-            entities.extend([
-                OmadaEnabledSwitch(coordinator, rule, device_type, "acl"),
-                OmadaDisabledSwitch(coordinator, rule, device_type, "acl")
-            ])
+    _LOGGER.debug("Processing ACL rules")
+    for device_type, rules in coordinator.data.get("acl_rules", {}).items():
+        _LOGGER.debug("Found ACL rules for device type %s: %s", device_type, rules)
+        if isinstance(rules, list):
+            for rule in rules:
+                _LOGGER.debug("Creating switches for ACL rule: %s", rule)
+                entities.extend([
+                    OmadaEnabledSwitch(coordinator, rule, device_type, "acl"),
+                    OmadaDisabledSwitch(coordinator, rule, device_type, "acl")
+                ])
 
     # Create switches for URL filters
-    for filter_type, filters in coordinator.data["url_filters"].items():
-        for filter_rule in filters:
-            entities.extend([
-                OmadaEnabledSwitch(coordinator, filter_rule, filter_type, "url_filter"),
-                OmadaDisabledSwitch(coordinator, filter_rule, filter_type, "url_filter")
-            ])
+    _LOGGER.debug("Processing URL filters")
+    for filter_type, filters in coordinator.data.get("url_filters", {}).items():
+        _LOGGER.debug("Found URL filters for type %s: %s", filter_type, filters)
+        if isinstance(filters, list):
+            for filter_rule in filters:
+                _LOGGER.debug("Creating switches for URL filter: %s", filter_rule)
+                entities.extend([
+                    OmadaEnabledSwitch(coordinator, filter_rule, filter_type, "url_filter"),
+                    OmadaDisabledSwitch(coordinator, filter_rule, filter_type, "url_filter")
+                ])
 
-    async_add_entities(entities)
+    if entities:
+        _LOGGER.debug("Adding %d switch entities", len(entities))
+        async_add_entities(entities)
+
     return True
