@@ -42,7 +42,7 @@ class OmadaDeviceTracker(CoordinatorEntity, TrackerEntity):
     def state(self):
         """Return the state of the device."""
         connected = self._device_data is not None
-        _LOGGER.info("Device %s is_connected: %s", self._device_name, connected)
+        _LOGGER.debug("Device %s is_connected: %s", self._device_name, connected)
         return "home" if connected else "not_home"
 
     @property
@@ -58,7 +58,7 @@ class OmadaDeviceTracker(CoordinatorEntity, TrackerEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        _LOGGER.info("Updating device tracker for %s", self._device_name)
+        _LOGGER.debug("Updating device tracker for %s", self._device_name)
         if updated_data := self._get_updated_data():
             self._device_data = updated_data
         else:
@@ -102,7 +102,7 @@ class OmadaClientTracker(CoordinatorEntity, TrackerEntity):
     def state(self):
         """Return the state of the client."""
         connected = self._client_data is not None
-        _LOGGER.info("Client %s is_connected: %s", self._client_name, connected)
+        _LOGGER.debug("Client %s is_connected: %s", self._client_name, connected)
         return "home" if connected else "not_home"
 
     @property
@@ -118,7 +118,7 @@ class OmadaClientTracker(CoordinatorEntity, TrackerEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        _LOGGER.info("Updating client tracker for %s", self._client_name)
+        _LOGGER.debug("Updating client tracker for %s", self._client_name)
         if updated_data := self._get_updated_data():
             self._client_data = updated_data
         else:
@@ -154,7 +154,7 @@ async def async_setup_entry(
     @callback
     def update_entities():
         """Update entities with new clients and devices."""
-        _LOGGER.info("Updating entities with new clients and devices")
+        _LOGGER.debug("Updating entities with new clients and devices")
         new_entities = []
 
         # Create device trackers for clients
