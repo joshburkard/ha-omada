@@ -6,11 +6,7 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.const import UnitOfTime
-
-from .const import (
-    DOMAIN,
-    DEVICE_TYPE_NAMES,
-)
+from .const import DOMAIN, DEVICE_TYPE_NAMES
 
 import logging
 
@@ -58,25 +54,13 @@ class OmadaBaseSensor(CoordinatorEntity, SensorEntity):
         """Get the latest data for this rule."""
         if self._rule_type == "acl":
             for rule in self.coordinator.data["acl_rules"].get(self._device_type, []):
-                if (
-                    rule.get("id") == self._device_data.get("id") or
-                    (
-                        "name" in rule and
-                        "name" in self._device_data and
-                        rule["name"] == self._device_data["name"]
-                    )
-                ):
+                if (rule.get("id") == self._device_data.get("id") or
+                        ("name" in rule and "name" in self._device_data and rule["name"] == self._device_data["name"])):
                     return rule
         elif self._rule_type == "url_filter":
             for rule in self.coordinator.data["url_filters"].get(self._device_type, []):
-                if (
-                    rule.get("id") == self._device_data.get("id") or
-                    (
-                        "name" in rule and
-                        "name" in self._device_data and
-                        rule["name"] == self._device_data["name"]
-                    )
-                ):
+                if (rule.get("id") == self._device_data.get("id") or
+                        ("name" in rule and "name" in self._device_data and rule["name"] == self._device_data["name"])):
                     return rule
         return None
 
@@ -541,9 +525,55 @@ def create_client_sensors(coordinator, client):
                 sensors.append(sensor_class(coordinator, client))
         else:
             sensors.append(sensor_class(coordinator, client, name, attribute))
-
     return sensors
 
+def create_device_sensors(coordinator, device):
+    """Create sensors for a device based on available data."""
+    sensors = []
+    sensor_definitions = [
+        (OmadaDeviceBasicSensor, "name", "name"),
+        (OmadaDeviceBasicSensor, "ip_address", "ip"),
+        (OmadaDeviceBasicSensor, "mac_address", "mac"),
+        (OmadaDeviceUptimeSensor, "uptime", None),
+        # Add more device sensors as needed
+    ]
+    for sensor_class, name, attribute in sensor_definitions:
+        if attribute is not None and attribute not in device:
+            continue
+        if sensor_class == OmadaDeviceUptimeSensor:
+            if "uptime" in device:
+                sensors.append(sensor_class(coordinator, device))
+        else:
+            sensors.append(sensor_class(coordinator, device, name, attribute))
+    return sensors
+
+def create_url_filter_sensors(coordinator, url_filter):
+    """Create sensors for a URL filter based on available data."""
+    sensors = []
+    sensor_definitions = [
+        (OmadaBaseSensor, "url_filter_name", "name"),
+        (OmadaBaseSensor, "url_filter_status", "status"),
+        # Add more URL filter sensors as needed
+    ]
+    for sensor_class, name, attribute in sensor_definitions:
+        if attribute is not None and attribute not in url_filter:
+            continue
+        sensors.append(sensor_class(coordinator, url_filter, "url_filter", "url_filter", name))
+    return sensors
+
+def create_acl_rule_sensors(coordinator, acl_rule):
+    """Create sensors for an ACL rule based on available data."""
+    sensors = []
+    sensor_definitions = [
+        (OmadaBaseSensor, "acl_rule_name", "name"),
+        (OmadaBaseSensor, "acl_rule_status", "status"),
+        # Add more ACL rule sensors as needed
+    ]
+    for sensor_class, name, attribute in sensor_definitions:
+        if attribute is not None and attribute not in acl_rule:
+            continue
+        sensors.append(sensor_class(coordinator, acl_rule, "acl", "acl", name))
+    return sensors
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -554,48 +584,29 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     entities = []
 
-    # Create sensors for ACL rules
-    for device_type, rules in coordinator.data.get("acl_rules", {}).items():
-        for rule in rules:
-            entities.extend([
-                OmadaTypeSensor(coordinator, rule, device_type, "acl"),
-                OmadaIndexSensor(coordinator, rule, device_type, "acl"),
-                OmadaProtocolSensor(coordinator, rule, device_type, "acl"),
-                OmadaPolicySensor(coordinator, rule, device_type, "acl"),
-            ])
+    @callback
+    def update_entities():
+        """Update entities with new clients, devices, URL filters, and ACL rules."""
+        new_entities = []
 
-    # Create sensors for URL filters
-    for filter_type, filters in coordinator.data.get("url_filters", {}).items():
-        for filter_rule in filters:
-            entities.extend([
-                OmadaTypeSensor(coordinator, filter_rule, filter_type, "url_filter"),
-                OmadaIndexSensor(coordinator, filter_rule, filter_type, "url_filter"),
-                OmadaPolicySensor(coordinator, filter_rule, filter_type, "url_filter"),
-            ])
+        # Create sensors for clients
+        for client in coordinator.data.get("clients", {}).get("data", []):
+            new_entities.extend(create_client_sensors(coordinator, client))
 
-    # Create sensors for devices
-    if coordinator.data.get("devices", {}).get("data"):
-        for device in coordinator.data["devices"]["data"]:
-            # Basic information sensors
-            entities.extend([
-                OmadaDeviceBasicSensor(coordinator, device, "type", "type"),
-                OmadaDeviceBasicSensor(coordinator, device, "name", "name"),
-                OmadaDeviceBasicSensor(coordinator, device, "mac_address", "mac"),
-                OmadaDeviceBasicSensor(coordinator, device, "model", "model"),
-                OmadaDeviceBasicSensor(coordinator, device, "model_display", "showModel"),
-                OmadaDeviceBasicSensor(coordinator, device, "model_version", "modelVersion"),
-                OmadaDeviceBasicSensor(coordinator, device, "firmware_version", "firmwareVersion"),
-                OmadaDeviceBasicSensor(coordinator, device, "version", "version"),
-                OmadaDeviceBasicSensor(coordinator, device, "hardware_version", "hwVersion"),
-                OmadaDeviceBasicSensor(coordinator, device, "ip_address", "ip"),
-                OmadaDeviceBasicSensor(coordinator, device, "public_ip", "publicIp"),
-                OmadaDeviceUptimeSensor(coordinator, device)
-            ])
+        # Create sensors for devices
+        for device in coordinator.data.get("devices", {}).get("data", []):
+            new_entities.extend(create_device_sensors(coordinator, device))
 
-    # Create sensors for clients
-    if coordinator.data.get("clients", {}).get("data"):
-        for client in coordinator.data["clients"]["data"]:
-            entities.extend(create_client_sensors(coordinator, client))
+        # Create sensors for URL filters
+        for url_filter in coordinator.data.get("url_filters", {}).get("data", []):
+            new_entities.extend(create_url_filter_sensors(coordinator, url_filter))
 
-    async_add_entities(entities)
+        # Create sensors for ACL rules
+        for acl_rule in coordinator.data.get("acl_rules", {}).get("data", []):
+            new_entities.extend(create_acl_rule_sensors(coordinator, acl_rule))
+
+        async_add_entities(new_entities)
+
+    coordinator.async_add_listener(update_entities)
+    update_entities()
     return True
