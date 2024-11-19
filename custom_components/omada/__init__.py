@@ -269,6 +269,38 @@ class OmadaAPI:
             _LOGGER.error("Failed to get clients: %s", str(e))
             return []
 
+    def get_networks(self):
+        """Get network information."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/lan-networks"
+            return self._make_request("GET", url)
+        except Exception as e:
+            _LOGGER.error("Failed to get networks: %s", str(e))
+            return []
+
+    def get_ip_groups(self):
+        """Get IP group information."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/profiles/groups"
+            _LOGGER.info("Getting IP groups from %s", url)
+            response = self._make_request("GET", url)
+            _LOGGER.info("IP groups response: %s", response)
+            return response
+        except Exception as e:
+            _LOGGER.error("Failed to get IP groups: %s", str(e))
+            return {"result": {"data": []}}
+
+    def get_ssids(self):
+        """Get SSID information."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/wireless/ssids"
+            #https://192.168.97.207:8043/417e7798550313d96fe1cadf2e81b5fb/api/v2/sites/6634c2fd840b3d7d15aab7c0/setting/wlans?_t=1732017710380
+            #https://192.168.97.207:8043/417e7798550313d96fe1cadf2e81b5fb/api/v2/sites/6634c2fd840b3d7d15aab7c0/setting/wlans/6634c2fe840b3d7d15aab7d7/ssids?currentPage=1&currentPageSize=10&_t=1732017710484
+            return self._make_request("GET", url)
+        except Exception as e:
+            _LOGGER.error("Failed to get SSIDs: %s", str(e))
+            return []
+
 class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Omada data."""
 
@@ -382,7 +414,33 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                 "url_filters": {},
                 "devices": {"data": []},
                 "clients": {"data": []},
+                "networks": {"data": []},
+                "ip_groups": {"data": []},
+                "ssids": {"data": []},
             }
+
+            # Get networks data
+            networks = await self.hass.async_add_executor_job(
+                self.api.get_networks
+            )
+            if networks and "result" in networks:
+                data["networks"] = networks["result"]
+
+            # Get IP groups data
+            ip_groups = await self.hass.async_add_executor_job(
+                self.api.get_ip_groups
+            )
+            _LOGGER.info("Fetched IP groups: %s", ip_groups)  # Add debug logging
+            if ip_groups and "result" in ip_groups:
+                data["ip_groups"] = ip_groups
+                _LOGGER.info("Stored IP groups in coordinator: %s", data["ip_groups"])
+
+            # Get SSIDs data
+            ssids = await self.hass.async_add_executor_job(
+                self.api.get_ssids
+            )
+            if ssids and "result" in ssids:
+                data["ssids"] = ssids["result"]
 
             # Get ACL rules
             for device_type in [0, 1, 2]:  # Gateway, Switch, EAP
