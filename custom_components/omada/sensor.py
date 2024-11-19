@@ -527,6 +527,27 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
 
         return group_info if group_info else None
 
+    def _get_ssid_info(self, ssid_ids):
+        """Get SSID information from coordinator data."""
+        _LOGGER.debug("Getting SSID info for IDs: %s", ssid_ids)
+        _LOGGER.debug("Available SSIDs: %s", self.coordinator.data.get("ssids", {}).get("result", {}).get("data", []))
+
+        if not self.coordinator.data.get("ssids", {}).get("result", {}).get("data"):
+            _LOGGER.warning("No SSIDs data available in coordinator")
+            return None
+
+        ssid_info = []
+        for ssid in self.coordinator.data["ssids"]["result"]["data"]:
+            if ssid.get("id") in ssid_ids:
+                _LOGGER.debug("Found matching SSID: %s", ssid)
+                ssid_info.append({
+                    "name": ssid.get("name", "Unknown SSID"),
+                    "wlan_name": ssid.get("wlanName", "Unknown WLAN"),
+                    "id": ssid.get("id")
+                })
+
+        return ssid_info if ssid_info else None
+
     def _get_source_dest_value(self, type_value, ids_list):
         """Get the appropriate source/destination value based on type."""
         try:
@@ -563,7 +584,14 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
                         for group in groups_info
                     ])
                 return f"Unknown IP-Port Group(s) ({', '.join(ids_list)})"
-
+            elif type_value == 4:  # SSID
+                ssids_info = self._get_ssid_info(ids_list)
+                if ssids_info:
+                    return " | ".join([
+                        f"{ssid['name']} ({ssid['wlan_name']})"
+                        for ssid in ssids_info
+                    ])
+                return f"Unknown SSID(s) ({', '.join(ids_list)})"
             elif type_value == 6:  # IPv6 Group
                 groups_info = self._get_group_info(ids_list, 3)
                 if groups_info:
@@ -649,6 +677,10 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
                 groups_info = self._get_group_info(ids_list, 1)
                 if groups_info:
                     attrs["ip_port_groups"] = groups_info
+            elif type_value == 4:  # SSID
+                ssids_info = self._get_ssid_info(ids_list)
+                if ssids_info:
+                    attrs["ssids"] = ssids_info
             elif type_value == 6:  # IPv6 Group
                 groups_info = self._get_group_info(ids_list, 3)
                 if groups_info:
@@ -680,6 +712,10 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
                 groups_info = self._get_group_info(ids_list, 1)
                 if groups_info:
                     attrs["ip_port_groups"] = groups_info
+            elif type_value == 4:  # SSID
+                ssids_info = self._get_ssid_info(ids_list)
+                if ssids_info:
+                    attrs["ssids"] = ssids_info
             elif type_value == 6:  # IPv6 Group
                 groups_info = self._get_group_info(ids_list, 3)
                 if groups_info:

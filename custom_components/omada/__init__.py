@@ -327,16 +327,86 @@ class OmadaAPI:
             _LOGGER.error("Failed to get IP groups: %s", str(e))
             return {"result": {"data": []}}
 
-    def get_ssids(self):
-        """Get SSID information."""
+    def get_wlans(self):
+        """Get WLAN information."""
         try:
-            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/wireless/ssids"
-            #https://192.168.97.207:8043/417e7798550313d96fe1cadf2e81b5fb/api/v2/sites/6634c2fd840b3d7d15aab7c0/setting/wlans?_t=1732017710380
-            #https://192.168.97.207:8043/417e7798550313d96fe1cadf2e81b5fb/api/v2/sites/6634c2fd840b3d7d15aab7c0/setting/wlans/6634c2fe840b3d7d15aab7d7/ssids?currentPage=1&currentPageSize=10&_t=1732017710484
-            return self._make_request("GET", url)
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/wlans"
+            _LOGGER.debug("Getting WLANs from %s", url)
+            response = self._make_request("GET", url)
+            _LOGGER.debug("WLANs response: %s", response)
+            return response
         except Exception as e:
-            _LOGGER.error("Failed to get SSIDs: %s", str(e))
+            _LOGGER.error("Failed to get WLANs: %s", str(e))
+            return {"result": {"data": []}}
+
+    def get_ssids_for_wlan(self, wlan_id):
+        """Get SSIDs for a specific WLAN."""
+        try:
+            # Initialize pagination parameters
+            all_ssids = []
+            current_page = 1
+            page_size = 10
+
+            while True:
+                url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/wlans/{wlan_id}/ssids?currentPage={current_page}&currentPageSize={page_size}"
+                _LOGGER.debug("Getting SSIDs for WLAN %s from %s", wlan_id, url)
+
+                response = self._make_request("GET", url)
+                if not response or "result" not in response:
+                    break
+
+                # Get total number of rows if we don't have it yet
+                total_rows = response["result"].get("totalRows", 0)
+                _LOGGER.debug("Total SSIDs to fetch: %s", total_rows)
+
+                # Get current page's data
+                page_data = response["result"].get("data", [])
+                all_ssids.extend(page_data)
+
+                # Calculate if we need more pages
+                ssids_so_far = len(all_ssids)
+                _LOGGER.debug("Fetched %s SSIDs so far out of %s", ssids_so_far, total_rows)
+
+                if ssids_so_far >= total_rows or not page_data:
+                    break
+
+                current_page += 1
+
+            return all_ssids
+        except Exception as e:
+            _LOGGER.error("Failed to get SSIDs for WLAN %s: %s", wlan_id, str(e))
             return []
+
+    def get_all_ssids(self):
+        """Get all SSIDs from all WLANs."""
+        try:
+            all_ssids = []
+            wlans_response = self.get_wlans()
+
+            if wlans_response and "result" in wlans_response:
+                wlans = wlans_response.get("result", {}).get("data", [])
+
+                for wlan in wlans:
+                    wlan_id = wlan.get("id")
+                    wlan_name = wlan.get("name", "Unknown WLAN")
+
+                    if wlan_id:
+                        ssids = self.get_ssids_for_wlan(wlan_id)
+                        for ssid in ssids:
+                            ssid["wlanName"] = wlan_name
+                            ssid["wlanId"] = wlan_id
+                        all_ssids.extend(ssids)
+
+            return {
+                "errorCode": 0,
+                "msg": "Success.",
+                "result": {
+                    "data": all_ssids
+                }
+            }
+        except Exception as e:
+            _LOGGER.error("Failed to get all SSIDs: %s", str(e))
+            return {"result": {"data": []}}
 
 class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Omada data."""
@@ -476,10 +546,12 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
 
             # Get SSIDs data
             ssids = await self.hass.async_add_executor_job(
-                self.api.get_ssids
+                self.api.get_all_ssids
             )
+            _LOGGER.debug("Fetched SSIDs: %s", ssids)
             if ssids and "result" in ssids:
-                data["ssids"] = ssids["result"]
+                data["ssids"] = ssids
+                _LOGGER.debug("Stored SSIDs in coordinator: %s", data["ssids"])
 
             # Get ACL rules
             for device_type in [0, 1, 2]:  # Gateway, Switch, EAP
