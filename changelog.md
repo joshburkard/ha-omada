@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.1.00008 | 18/11/2024 | added translation type Network to sensors "Source" and "Destination" |
 | 0.1.00007 | 18/11/2024 | added sensors "Source" and "Destination" to ACLS and translate type IPGroup |
 | 0.1.00006 | 18/11/2024 | added sensors "Source Type" and "Destination Type" to ACLS |
 | 0.1.00005 | 18/11/2024 | display correct names of Protocols in ACL Rules |

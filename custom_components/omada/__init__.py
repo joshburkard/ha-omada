@@ -272,19 +272,56 @@ class OmadaAPI:
     def get_networks(self):
         """Get network information."""
         try:
-            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/lan-networks"
-            return self._make_request("GET", url)
+            all_networks = []
+            current_page = 1
+            page_size = 10
+
+            while True:
+                url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/lan/networks?currentPage={current_page}&currentPageSize={page_size}"
+                _LOGGER.debug("Getting networks page %s from %s", current_page, url)
+
+                response = self._make_request("GET", url)
+                if not response or "result" not in response:
+                    break
+
+                # Get total number of rows if we don't have it yet
+                total_rows = response["result"].get("totalRows", 0)
+                _LOGGER.debug("Total networks to fetch: %s", total_rows)
+
+                # Get current page's data
+                page_data = response["result"].get("data", [])
+                all_networks.extend(page_data)
+
+                # Calculate if we need more pages
+                networks_so_far = len(all_networks)
+                _LOGGER.debug("Fetched %s networks so far out of %s", networks_so_far, total_rows)
+
+                if networks_so_far >= total_rows or not page_data:
+                    break
+
+                current_page += 1
+
+            _LOGGER.debug("Finished fetching all %s networks", len(all_networks))
+            return {
+                "errorCode": 0,
+                "msg": "Success.",
+                "result": {
+                    "totalRows": len(all_networks),
+                    "data": all_networks
+                }
+            }
+
         except Exception as e:
             _LOGGER.error("Failed to get networks: %s", str(e))
-            return []
+            return {"result": {"data": []}}
 
     def get_ip_groups(self):
         """Get IP group information."""
         try:
             url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/profiles/groups"
-            _LOGGER.info("Getting IP groups from %s", url)
+            _LOGGER.debug("Getting IP groups from %s", url)
             response = self._make_request("GET", url)
-            _LOGGER.info("IP groups response: %s", response)
+            _LOGGER.debug("IP groups response: %s", response)
             return response
         except Exception as e:
             _LOGGER.error("Failed to get IP groups: %s", str(e))
@@ -423,17 +460,19 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
             networks = await self.hass.async_add_executor_job(
                 self.api.get_networks
             )
+            _LOGGER.debug("Fetched networks: %s", networks)
             if networks and "result" in networks:
-                data["networks"] = networks["result"]
+                data["networks"] = networks
+                _LOGGER.debug("Stored networks in coordinator: %s", data["networks"])
 
             # Get IP groups data
             ip_groups = await self.hass.async_add_executor_job(
                 self.api.get_ip_groups
             )
-            _LOGGER.info("Fetched IP groups: %s", ip_groups)  # Add debug logging
+            _LOGGER.debug("Fetched IP groups: %s", ip_groups)  # Add debug logging
             if ip_groups and "result" in ip_groups:
                 data["ip_groups"] = ip_groups
-                _LOGGER.info("Stored IP groups in coordinator: %s", data["ip_groups"])
+                _LOGGER.debug("Stored IP groups in coordinator: %s", data["ip_groups"])
 
             # Get SSIDs data
             ssids = await self.hass.async_add_executor_job(

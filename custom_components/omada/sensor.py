@@ -411,17 +411,37 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
         """Initialize the source/destination sensor."""
         super().__init__(coordinator, rule_data, device_type, "acl", attribute)
         self._attribute = attribute
-        _LOGGER.info(
+        _LOGGER.debug(
             "Initializing %s sensor for rule %s with data: %s",
             attribute,
             rule_data.get("name"),
             rule_data
         )
 
+    def _get_network_info(self, network_ids):
+            """Get network information from coordinator data."""
+            _LOGGER.debug("Getting network info for IDs: %s", network_ids)
+            _LOGGER.debug("Available networks: %s", self.coordinator.data.get("networks", {}).get("result", {}).get("data", []))
+
+            if not self.coordinator.data.get("networks", {}).get("result", {}).get("data"):
+                _LOGGER.warning("No networks data available in coordinator")
+                return None
+
+            network_info = []
+            for network in self.coordinator.data["networks"]["result"]["data"]:
+                if network.get("id") in network_ids:
+                    _LOGGER.debug("Found matching network: %s", network)
+                    network_info.append({
+                        "name": network.get("name", "Unknown Network"),
+                        "id": network.get("id")
+                    })
+
+            return network_info if network_info else None
+
     def _get_ip_group_info(self, group_ids):
         """Get IP group information from coordinator data."""
-        _LOGGER.info("Getting IP group info for IDs: %s", group_ids)
-        _LOGGER.info("Available IP groups: %s", self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data", []))
+        _LOGGER.debug("Getting IP group info for IDs: %s", group_ids)
+        _LOGGER.debug("Available IP groups: %s", self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data", []))
 
         if not self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data"):
             _LOGGER.warning("No IP groups data available in coordinator")
@@ -430,7 +450,7 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
         group_info = []
         for group in self.coordinator.data["ip_groups"]["result"]["data"]:
             if group.get("groupId") in group_ids:  # Changed from id to groupId
-                _LOGGER.info("Found matching IP group: %s", group)
+                _LOGGER.debug("Found matching IP group: %s", group)
                 ips = []
                 for ip_entry in group.get("ipList", []):
                     ip = ip_entry.get("ip", "")
@@ -440,7 +460,7 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
                     elif ip:
                         ips.append(ip)
                 name = group.get("name", "Unknown Group")
-                _LOGGER.info("Adding group %s with IPs %s", name, ips)
+                _LOGGER.debug("Adding group %s with IPs %s", name, ips)
                 group_info.append({
                     "name": name,
                     "ips": ips,
@@ -454,13 +474,21 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
         """Get the appropriate source/destination value based on type."""
         try:
             type_value = int(type_value)
-            _LOGGER.info(
+            _LOGGER.debug(
                 "Getting value for type %s with IDs: %s",
                 type_value,
                 ids_list
             )
 
-            if type_value == 1:  # IP Group
+            if type_value == 0:  # Network
+                networks_info = self._get_network_info(ids_list)
+                if networks_info:
+                    return " | ".join([
+                        f"{network['name']}"
+                        for network in networks_info
+                    ])
+                return f"Unknown Network(s) ({', '.join(ids_list)})"
+            elif type_value == 1:  # IP Group
                 groups_info = self._get_ip_group_info(ids_list)
                 if groups_info:
                     return " | ".join([
@@ -521,8 +549,18 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
                 "source_type": type_value,
                 "source_ids": ids_list,
             })
-            # Add IP group details if applicable
-            if type_value == 1:  # IP Group
+            # Add details based on type
+            if type_value == 0:  # Network
+                networks_info = self._get_network_info(ids_list)
+                if networks_info:
+                    attrs["networks"] = [
+                        {
+                            "name": network["name"],
+                            "id": network["id"]
+                        }
+                        for network in networks_info
+                    ]
+            elif type_value == 1:  # IP Group
                 groups_info = self._get_ip_group_info(ids_list)
                 if groups_info:
                     attrs["ip_groups"] = [
@@ -540,8 +578,18 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
                 "destination_type": type_value,
                 "destination_ids": ids_list,
             })
-            # Add IP group details if applicable
-            if type_value == 1:  # IP Group
+            # Add details based on type
+            if type_value == 0:  # Network
+                networks_info = self._get_network_info(ids_list)
+                if networks_info:
+                    attrs["networks"] = [
+                        {
+                            "name": network["name"],
+                            "id": network["id"]
+                        }
+                        for network in networks_info
+                    ]
+            elif type_value == 1:  # IP Group
                 groups_info = self._get_ip_group_info(ids_list)
                 if groups_info:
                     attrs["ip_groups"] = [
