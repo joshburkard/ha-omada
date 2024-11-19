@@ -1,4 +1,4 @@
-﻿"""
+"""
 Device Tracker platform for Omada Controller.
 """
 
