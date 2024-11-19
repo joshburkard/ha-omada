@@ -154,6 +154,16 @@ class OmadaIndexSensor(OmadaBaseSensor):
 class OmadaACLRuleSensor(OmadaBaseSensor):
     """Sensor for ACL rule information."""
 
+    # Type mapping for source and destination
+    TYPE_MAP = {
+        0: "Network",
+        1: "IP Group",
+        2: "IP-Port Group",
+        4: "SSID",
+        6: "IPv6 Group",
+        7: "IPv6-Port Group"
+    }
+
     def __init__(self, coordinator, rule_data, device_type, attribute):
         """Initialize the ACL rule sensor."""
         super().__init__(coordinator, rule_data, device_type, "acl", attribute)
@@ -355,6 +365,12 @@ class OmadaACLRuleSensor(OmadaBaseSensor):
                 return policy_map.get(value, f"Unknown ({value})")
             except (TypeError, ValueError):
                 return f"Unknown ({value})"
+        elif self._attribute in ["sourceType", "destinationType"]:
+            try:
+                value = int(value)
+                return self.TYPE_MAP.get(value, f"Unknown Type ({value})")
+            except (TypeError, ValueError):
+                return f"Unknown Type ({value})"
 
         return value
 
@@ -798,7 +814,9 @@ def create_acl_rule_sensors(coordinator, rule, device_type):
         (OmadaACLRuleSensor, "dst_ip", "dstIp"),
         (OmadaACLRuleSensor, "src_port", "srcPort"),
         (OmadaACLRuleSensor, "dst_port", "dstPort"),
-        (OmadaACLRuleSensor, "status", "status")
+        (OmadaACLRuleSensor, "status", "status"),
+        (OmadaACLRuleSensor, "Source Type", "sourceType"),
+        (OmadaACLRuleSensor, "Destination Type", "destinationType")
     ]
 
     for sensor_class, name, attribute in sensor_definitions:
