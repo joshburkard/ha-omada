@@ -407,6 +407,17 @@ class OmadaACLRuleSensor(OmadaBaseSensor):
 class OmadaACLSourceDestSensor(OmadaBaseSensor):
     """Sensor for ACL rule source and destination information."""
 
+    # Type mapping for group types
+    GROUP_TYPE_MAP = {
+        0: "IP Group",
+        1: "IP Port Group",
+        2: "MAC Group",  # Not used currently
+        3: "IPv6 Group",
+        4: "IPv6 Port Group",
+        5: "Country Group",  # Not used currently
+        7: "Domain Group"    # Not used currently
+    }
+
     def __init__(self, coordinator, rule_data, device_type, attribute):
         """Initialize the source/destination sensor."""
         super().__init__(coordinator, rule_data, device_type, "acl", attribute)
@@ -438,35 +449,81 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
 
             return network_info if network_info else None
 
-    def _get_ip_group_info(self, group_ids):
-        """Get IP group information from coordinator data."""
-        _LOGGER.debug("Getting IP group info for IDs: %s", group_ids)
-        _LOGGER.debug("Available IP groups: %s", self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data", []))
+    def _get_group_info(self, group_ids, expected_type):
+        """Get group information from coordinator data."""
+        _LOGGER.debug("Getting group info for IDs: %s (expected type: %s)", group_ids, expected_type)
+        _LOGGER.debug("Available groups: %s", self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data", []))
 
         if not self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data"):
-            _LOGGER.warning("No IP groups data available in coordinator")
+            _LOGGER.warning("No groups data available in coordinator")
             return None
 
         group_info = []
         for group in self.coordinator.data["ip_groups"]["result"]["data"]:
-            if group.get("groupId") in group_ids:  # Changed from id to groupId
-                _LOGGER.debug("Found matching IP group: %s", group)
-                ips = []
-                for ip_entry in group.get("ipList", []):
-                    ip = ip_entry.get("ip", "")
-                    mask = ip_entry.get("mask", "")
-                    if ip and mask:
-                        ips.append(f"{ip}/{mask}")
-                    elif ip:
-                        ips.append(ip)
-                name = group.get("name", "Unknown Group")
-                _LOGGER.debug("Adding group %s with IPs %s", name, ips)
-                group_info.append({
-                    "name": name,
-                    "ips": ips,
-                    "type": group.get("type"),
-                    "id": group.get("groupId")
-                })
+            if group.get("groupId") in group_ids and group.get("type") == expected_type:
+                _LOGGER.debug("Found matching group: %s", group)
+
+                # Handle different group types
+                if expected_type == 0:  # IP Group
+                    addresses = []
+                    for ip_entry in group.get("ipList", []):
+                        ip = ip_entry.get("ip", "")
+                        mask = ip_entry.get("mask", "")
+                        description = ip_entry.get("description", "")
+                        if ip and mask:
+                            addr = f"{ip}/{mask}"
+                            if description:
+                                addr += f" ({description})"
+                            addresses.append(addr)
+                        elif ip:
+                            addresses.append(ip)
+
+                elif expected_type == 1:  # IP Port Group
+                    addresses = []
+                    for ip_entry in group.get("ipList", []):
+                        ip = ip_entry.get("ip", "")
+                        mask = ip_entry.get("mask", "")
+                        if ip and mask:
+                            addresses.append(f"{ip}/{mask}")
+                        elif ip:
+                            addresses.append(ip)
+                    ports = group.get("portList", [])
+                    port_masks = group.get("portMaskList", [])
+
+                elif expected_type == 3:  # IPv6 Group
+                    addresses = []
+                    for ipv6_entry in group.get("ipv6List", []):
+                        ip = ipv6_entry.get("ip", "")
+                        prefix = ipv6_entry.get("prefix", "")
+                        if ip and prefix:
+                            addresses.append(f"{ip}/{prefix}")
+                        elif ip:
+                            addresses.append(ip)
+
+                elif expected_type == 4:  # IPv6 Port Group
+                    addresses = []
+                    for ipv6_entry in group.get("ipv6List", []):
+                        ip = ipv6_entry.get("ip", "")
+                        prefix = ipv6_entry.get("prefix", "")
+                        if ip and prefix:
+                            addresses.append(f"{ip}/{prefix}")
+                        elif ip:
+                            addresses.append(ip)
+                    ports = group.get("portList", [])
+                    port_masks = group.get("portMaskList", [])
+
+                group_data = {
+                    "name": group.get("name", "Unknown Group"),
+                    "type": self.GROUP_TYPE_MAP.get(expected_type, f"Unknown Type ({expected_type})"),
+                    "addresses": addresses,
+                }
+
+                # Add ports if it's a port group
+                if expected_type in [1, 4]:  # IP Port Group or IPv6 Port Group
+                    group_data["ports"] = ports
+                    group_data["port_masks"] = port_masks
+
+                group_info.append(group_data)
 
         return group_info if group_info else None
 
@@ -488,17 +545,46 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
                         for network in networks_info
                     ])
                 return f"Unknown Network(s) ({', '.join(ids_list)})"
+
             elif type_value == 1:  # IP Group
-                groups_info = self._get_ip_group_info(ids_list)
+                groups_info = self._get_group_info(ids_list, 0)
                 if groups_info:
                     return " | ".join([
-                        f"{group['name']} ({', '.join(group['ips'])})"
+                        f"{group['name']} ({', '.join(group['addresses'])})"
                         for group in groups_info
                     ])
-                return f"Unknown Group(s) ({', '.join(ids_list)})"
+                return f"Unknown IP Group(s) ({', '.join(ids_list)})"
+
+            elif type_value == 2:  # IP-Port Group
+                groups_info = self._get_group_info(ids_list, 1)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['addresses'])}) Ports: {', '.join(group['ports'])}"
+                        for group in groups_info
+                    ])
+                return f"Unknown IP-Port Group(s) ({', '.join(ids_list)})"
+
+            elif type_value == 6:  # IPv6 Group
+                groups_info = self._get_group_info(ids_list, 3)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['addresses'])})"
+                        for group in groups_info
+                    ])
+                return f"Unknown IPv6 Group(s) ({', '.join(ids_list)})"
+
+            elif type_value == 7:  # IPv6-Port Group
+                groups_info = self._get_group_info(ids_list, 4)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['addresses'])}) Ports: {', '.join(group['ports'])}"
+                        for group in groups_info
+                    ])
+                return f"Unknown IPv6-Port Group(s) ({', '.join(ids_list)})"
+
             else:
-                # Handle other types as before
-                return f"Type {type_value} - IDs: {', '.join(ids_list)}"
+                return f"Unknown Type {type_value} ({', '.join(ids_list)})"
+
         except Exception as e:
             _LOGGER.error("Error processing type %s: %s", type_value, str(e))
             return f"Error: {str(e)}"
@@ -549,56 +635,59 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
                 "source_type": type_value,
                 "source_ids": ids_list,
             })
-            # Add details based on type
+
+            # Add type-specific details
             if type_value == 0:  # Network
                 networks_info = self._get_network_info(ids_list)
                 if networks_info:
-                    attrs["networks"] = [
-                        {
-                            "name": network["name"],
-                            "id": network["id"]
-                        }
-                        for network in networks_info
-                    ]
+                    attrs["networks"] = networks_info
             elif type_value == 1:  # IP Group
-                groups_info = self._get_ip_group_info(ids_list)
+                groups_info = self._get_group_info(ids_list, 0)
                 if groups_info:
-                    attrs["ip_groups"] = [
-                        {
-                            "name": group["name"],
-                            "ips": group["ips"]
-                        }
-                        for group in groups_info
-                    ]
+                    attrs["ip_groups"] = groups_info
+            elif type_value == 2:  # IP-Port Group
+                groups_info = self._get_group_info(ids_list, 1)
+                if groups_info:
+                    attrs["ip_port_groups"] = groups_info
+            elif type_value == 6:  # IPv6 Group
+                groups_info = self._get_group_info(ids_list, 3)
+                if groups_info:
+                    attrs["ipv6_groups"] = groups_info
+            elif type_value == 7:  # IPv6-Port Group
+                groups_info = self._get_group_info(ids_list, 4)
+                if groups_info:
+                    attrs["ipv6_port_groups"] = groups_info
 
+        # Similar structure for destination
         elif self._attribute == "destination":
+            # ... same structure as source, just with destination attributes
             type_value = self._device_data.get("destinationType")
             ids_list = self._device_data.get("destinationIds", [])
             attrs.update({
                 "destination_type": type_value,
                 "destination_ids": ids_list,
             })
-            # Add details based on type
+
             if type_value == 0:  # Network
                 networks_info = self._get_network_info(ids_list)
                 if networks_info:
-                    attrs["networks"] = [
-                        {
-                            "name": network["name"],
-                            "id": network["id"]
-                        }
-                        for network in networks_info
-                    ]
+                    attrs["networks"] = networks_info
             elif type_value == 1:  # IP Group
-                groups_info = self._get_ip_group_info(ids_list)
+                groups_info = self._get_group_info(ids_list, 0)
                 if groups_info:
-                    attrs["ip_groups"] = [
-                        {
-                            "name": group["name"],
-                            "ips": group["ips"]
-                        }
-                        for group in groups_info
-                    ]
+                    attrs["ip_groups"] = groups_info
+            elif type_value == 2:  # IP-Port Group
+                groups_info = self._get_group_info(ids_list, 1)
+                if groups_info:
+                    attrs["ip_port_groups"] = groups_info
+            elif type_value == 6:  # IPv6 Group
+                groups_info = self._get_group_info(ids_list, 3)
+                if groups_info:
+                    attrs["ipv6_groups"] = groups_info
+            elif type_value == 7:  # IPv6-Port Group
+                groups_info = self._get_group_info(ids_list, 4)
+                if groups_info:
+                    attrs["ipv6_port_groups"] = groups_info
 
         return attrs
 
