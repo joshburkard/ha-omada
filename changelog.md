@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.1.00012 | 19/11/2024 | fixing "Source Type" for URL Filtering |
 | 0.1.00011 | 19/11/2024 | added sensors "Policy", "Source" and "Source Type" to URL Filterings |
 | 0.1.00010 | 19/11/2024 | added translation type "SSID" to sensors "Source" and "Destination" |
 | 0.1.00009 | 19/11/2024 | added translation type "IP Port Group", "IPv6 Group" and "IPv6 Port Group" to sensors "Source" and "Destination" |

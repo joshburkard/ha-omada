@@ -1323,7 +1323,7 @@ def create_url_filter_sensors(coordinator, filter_rule, filter_type):
         (OmadaURLFilterSensor, "status", "Status", "status"),
         (OmadaURLFilterSensor, "policy", "Policy", "mode"),    # Will show as "Policy" but use mode attribute
         (OmadaURLFilterSensor, "description", "Description", "description"),
-        (OmadaURLFilterSensor, "Source Type", "Source Type", "sourceType"),
+        (OmadaURLFilterSensor, "sourceType", "Source Type", "sourceType"),
         (OmadaURLFilterSourceSensor, "source", "Source", "source")
     ]
 
