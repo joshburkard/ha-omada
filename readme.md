@@ -10,8 +10,8 @@ this features are already integrated:
 
 - Clients with a lot of sensors
 - Devices with a lot of sensors
-- ACL Toggle
-- URL Filtering Toggle
+- ACL Rules
+- URL Filtering
 
 ## Setup
 
@@ -27,6 +27,10 @@ Recommended to be installed via [HACS](https://github.com/hacs/integration)
 8. Search for Omada
 9. Enter the URL you use to access your Omada SDN, the username you would like HA to connect with, and its password, also define the Site-Name and the Refreshing Interval.
 10. If no errors occur, you're all set! Otherwise, feel free to browse the issue track or open a new issue to help resolve the issue.
+
+## more documentation
+
+you can find more documentation [here](doc/examples.md)
 
 ## Notes
 

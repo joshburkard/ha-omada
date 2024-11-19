@@ -17,11 +17,16 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
+from homeassistant.helpers.entity_registry import (
+    async_get as er_async_get,
+    async_entries_for_config_entry
+)
+from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN, CONF_SITE_NAME, CONF_SKIP_CERT_VERIFY, DEFAULT_UPDATE_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = [Platform.SENSOR, Platform.SWITCH]
+PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.DEVICE_TRACKER]
 
 class OmadaAPI:
     """Class to handle Omada API calls."""
@@ -264,6 +269,145 @@ class OmadaAPI:
             _LOGGER.error("Failed to get clients: %s", str(e))
             return []
 
+    def get_networks(self):
+        """Get network information."""
+        try:
+            all_networks = []
+            current_page = 1
+            page_size = 10
+
+            while True:
+                url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/lan/networks?currentPage={current_page}&currentPageSize={page_size}"
+                _LOGGER.debug("Getting networks page %s from %s", current_page, url)
+
+                response = self._make_request("GET", url)
+                if not response or "result" not in response:
+                    break
+
+                # Get total number of rows if we don't have it yet
+                total_rows = response["result"].get("totalRows", 0)
+                _LOGGER.debug("Total networks to fetch: %s", total_rows)
+
+                # Get current page's data
+                page_data = response["result"].get("data", [])
+                all_networks.extend(page_data)
+
+                # Calculate if we need more pages
+                networks_so_far = len(all_networks)
+                _LOGGER.debug("Fetched %s networks so far out of %s", networks_so_far, total_rows)
+
+                if networks_so_far >= total_rows or not page_data:
+                    break
+
+                current_page += 1
+
+            _LOGGER.debug("Finished fetching all %s networks", len(all_networks))
+            return {
+                "errorCode": 0,
+                "msg": "Success.",
+                "result": {
+                    "totalRows": len(all_networks),
+                    "data": all_networks
+                }
+            }
+
+        except Exception as e:
+            _LOGGER.error("Failed to get networks: %s", str(e))
+            return {"result": {"data": []}}
+
+    def get_ip_groups(self):
+        """Get IP group information."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/profiles/groups"
+            _LOGGER.debug("Getting IP groups from %s", url)
+            response = self._make_request("GET", url)
+            _LOGGER.debug("IP groups response: %s", response)
+            return response
+        except Exception as e:
+            _LOGGER.error("Failed to get IP groups: %s", str(e))
+            return {"result": {"data": []}}
+
+    def get_wlans(self):
+        """Get WLAN information."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/wlans"
+            _LOGGER.debug("Getting WLANs from %s", url)
+            response = self._make_request("GET", url)
+            _LOGGER.debug("WLANs response: %s", response)
+            return response
+        except Exception as e:
+            _LOGGER.error("Failed to get WLANs: %s", str(e))
+            return {"result": {"data": []}}
+
+    def get_ssids_for_wlan(self, wlan_id):
+        """Get SSIDs for a specific WLAN."""
+        try:
+            # Initialize pagination parameters
+            all_ssids = []
+            current_page = 1
+            page_size = 10
+
+            while True:
+                url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/setting/wlans/{wlan_id}/ssids?currentPage={current_page}&currentPageSize={page_size}"
+                _LOGGER.debug("Getting SSIDs for WLAN %s from %s", wlan_id, url)
+
+                response = self._make_request("GET", url)
+                if not response or "result" not in response:
+                    break
+
+                # Get total number of rows if we don't have it yet
+                total_rows = response["result"].get("totalRows", 0)
+                _LOGGER.debug("Total SSIDs to fetch: %s", total_rows)
+
+                # Get current page's data
+                page_data = response["result"].get("data", [])
+                all_ssids.extend(page_data)
+
+                # Calculate if we need more pages
+                ssids_so_far = len(all_ssids)
+                _LOGGER.debug("Fetched %s SSIDs so far out of %s", ssids_so_far, total_rows)
+
+                if ssids_so_far >= total_rows or not page_data:
+                    break
+
+                current_page += 1
+
+            return all_ssids
+        except Exception as e:
+            _LOGGER.error("Failed to get SSIDs for WLAN %s: %s", wlan_id, str(e))
+            return []
+
+    def get_all_ssids(self):
+        """Get all SSIDs from all WLANs."""
+        try:
+            all_ssids = []
+            wlans_response = self.get_wlans()
+
+            if wlans_response and "result" in wlans_response:
+                wlans = wlans_response.get("result", {}).get("data", [])
+
+                for wlan in wlans:
+                    wlan_id = wlan.get("id")
+                    wlan_name = wlan.get("name", "Unknown WLAN")
+
+                    if wlan_id:
+                        ssids = self.get_ssids_for_wlan(wlan_id)
+                        for ssid in ssids:
+                            ssid["wlanName"] = wlan_name
+                            ssid["wlanId"] = wlan_id
+                        all_ssids.extend(ssids)
+
+            return {
+                "errorCode": 0,
+                "msg": "Success.",
+                "result": {
+                    "data": all_ssids
+                }
+            }
+        except Exception as e:
+            _LOGGER.error("Failed to get all SSIDs: %s", str(e))
+            return {"result": {"data": []}}
+
 class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
     """Class to manage fetching Omada data."""
 
@@ -276,6 +420,98 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=update_interval,
         )
         self.api = api
+        self._entity_registry = er_async_get(self.hass)
+        self._device_registry = dr.async_get(self.hass)
+        self._pending_removals = set()
+
+    async def trigger_removal(self, entity_id: str, device_id: str):
+        """Trigger removal of an entity and its associated device."""
+        if entity_id in self._pending_removals:
+            return
+
+        self._pending_removals.add(entity_id)
+
+        try:
+            device = self._device_registry.async_get_device({(DOMAIN, device_id)})
+            if device:
+                # Get all entities for this device
+                device_entities = [
+                    entry.entity_id
+                    for entry in self._entity_registry.entities.values()
+                    if entry.device_id == device.id
+                ]
+
+                # Remove all entities for this device
+                for ent_id in device_entities:
+                    _LOGGER.debug("Removing entity %s for device %s", ent_id, device_id)
+                    self._entity_registry.async_remove(ent_id)
+
+                # Remove the device itself
+                _LOGGER.debug("Removing device %s", device_id)
+                self._device_registry.async_remove_device(device.id)
+
+        except Exception as err:
+            _LOGGER.error("Error removing device and entities: %s", str(err))
+        finally:
+            self._pending_removals.discard(entity_id)
+
+    async def _check_missing_entities(self, data):
+        """Check and remove entities that no longer exist in the data."""
+        # Build sets of current valid device IDs
+        current_acl_devices = set()
+        current_url_filter_devices = set()
+        devices_to_remove = []
+
+        # Add ACL rule devices
+        for device_type, rules in data["acl_rules"].items():
+            for rule in rules:
+                if "name" in rule:
+                    device_id = f"omada_acl_{rule['name']}_{device_type}"
+                    current_acl_devices.add(device_id)
+
+        # Add URL filter devices
+        for filter_type, filters in data["url_filters"].items():
+            for filter_rule in filters:
+                if "name" in filter_rule:
+                    device_id = f"omada_url_filter_{filter_rule['name']}_{filter_type}"
+                    current_url_filter_devices.add(device_id)
+
+        # Create list of devices to check
+        device_list = list(self._device_registry.devices.values())
+
+        # Check all devices and create removal list
+        for device in device_list:
+            for identifier in device.identifiers:
+                if identifier[0] == DOMAIN:
+                    device_id = identifier[1]
+
+                    # Check ACL devices
+                    if device_id.startswith("omada_acl_") and device_id not in current_acl_devices:
+                        _LOGGER.debug("ACL device %s no longer exists, marking for removal", device_id)
+                        # Get any entity from this device for removal
+                        device_entities = [
+                            entry.entity_id
+                            for entry in self._entity_registry.entities.values()
+                            if entry.device_id == device.id
+                        ]
+                        if device_entities:
+                            devices_to_remove.append((device_entities[0], device_id))
+
+                    # Check URL filter devices
+                    elif device_id.startswith("omada_url_filter_") and device_id not in current_url_filter_devices:
+                        _LOGGER.debug("URL filter device %s no longer exists, marking for removal", device_id)
+                        # Get any entity from this device for removal
+                        device_entities = [
+                            entry.entity_id
+                            for entry in self._entity_registry.entities.values()
+                            if entry.device_id == device.id
+                        ]
+                        if device_entities:
+                            devices_to_remove.append((device_entities[0], device_id))
+
+        # Process removals after iteration is complete
+        for entity_id, device_id in devices_to_remove:
+            await self.trigger_removal(entity_id, device_id)
 
     async def _async_update_data(self):
         """Fetch data from API."""
@@ -285,9 +521,39 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                 "url_filters": {},
                 "devices": {"data": []},
                 "clients": {"data": []},
+                "networks": {"data": []},
+                "ip_groups": {"data": []},
+                "ssids": {"data": []},
             }
 
-            # Get ACL rules for different device types
+            # Get networks data
+            networks = await self.hass.async_add_executor_job(
+                self.api.get_networks
+            )
+            _LOGGER.debug("Fetched networks: %s", networks)
+            if networks and "result" in networks:
+                data["networks"] = networks
+                _LOGGER.debug("Stored networks in coordinator: %s", data["networks"])
+
+            # Get IP groups data
+            ip_groups = await self.hass.async_add_executor_job(
+                self.api.get_ip_groups
+            )
+            _LOGGER.debug("Fetched IP groups: %s", ip_groups)  # Add debug logging
+            if ip_groups and "result" in ip_groups:
+                data["ip_groups"] = ip_groups
+                _LOGGER.debug("Stored IP groups in coordinator: %s", data["ip_groups"])
+
+            # Get SSIDs data
+            ssids = await self.hass.async_add_executor_job(
+                self.api.get_all_ssids
+            )
+            _LOGGER.debug("Fetched SSIDs: %s", ssids)
+            if ssids and "result" in ssids:
+                data["ssids"] = ssids
+                _LOGGER.debug("Stored SSIDs in coordinator: %s", data["ssids"])
+
+            # Get ACL rules
             for device_type in [0, 1, 2]:  # Gateway, Switch, EAP
                 _LOGGER.debug("Fetching ACL rules for device type %s", device_type)
                 rules = await self.hass.async_add_executor_job(
@@ -296,7 +562,6 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                 if rules and "result" in rules and "data" in rules["result"]:
                     data["acl_rules"][device_type] = rules["result"]["data"]
                 else:
-                    _LOGGER.debug("No ACL rules found for device type %s", device_type)
                     data["acl_rules"][device_type] = []
 
             # Get URL filters
@@ -308,89 +573,24 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                 if filters and "result" in filters and "data" in filters["result"]:
                     data["url_filters"][filter_type] = filters["result"]["data"]
                 else:
-                    _LOGGER.debug("No URL filters found for type %s", filter_type)
                     data["url_filters"][filter_type] = []
 
-            # Get devices with filtered data
+            # Get devices data
             devices = await self.hass.async_add_executor_job(
                 self.api.get_devices
             )
             if devices and "result" in devices and "data" in devices["result"]:
-                # Filter device data to include only the fields we want
-                filtered_devices = []
-                for device in devices["result"]["data"]:
-                    filtered_device = {
-                        "type": device.get("type"),
-                        "name": device.get("name"),
-                        "mac": device.get("mac"),
-                        "model": device.get("model"),
-                        "showModel": device.get("showModel"),
-                        "modelVersion": device.get("modelVersion"),
-                        "firmwareVersion": device.get("firmwareVersion"),
-                        "version": device.get("version"),
-                        "hwVersion": device.get("hwVersion"),
-                        "ip": device.get("ip"),
-                        "publicIp": device.get("publicIp"),
-                        "uptime": device.get("uptime"),
-                        "uptimeLong": device.get("uptimeLong"),
-                    }
-                    filtered_devices.append(filtered_device)
-                data["devices"] = {"data": filtered_devices}
+                data["devices"] = {"data": devices["result"]["data"]}
 
-            # Get clients with filtered data
+            # Get clients data
             clients = await self.hass.async_add_executor_job(
                 self.api.get_clients
             )
             if clients and "result" in clients and "data" in clients["result"]:
-                filtered_clients = []
-                for client in clients["result"]["data"]:
-                    filtered_client = {}
+                data["clients"] = {"data": clients["result"]["data"]}
 
-                    # Map of fields to include and their validation
-                    fields_to_check = {
-                        "name": str,
-                        "gatewayName": str,
-                        "ip": str,
-                        "mac": str,
-                        "wireless": bool,
-                        "networkName": str,
-                        "uptime": int,
-                        "trafficUp": int,
-                        "trafficDown": int,
-                        "downPacket": int,
-                        "upPacket": int,
-                        "active": bool,
-                        "ssid": str,
-                        "signalLevel": int,
-                        "signalRank": int,
-                        "wifiMode": str,
-                        "apName": str,
-                        "apMac": str,
-                        "radioId": str,
-                        "channel": str,
-                        "rxRate": int,
-                        "txRate": int,
-                        "rssi": int,
-                    }
-
-                    # Only add fields that exist and have valid values
-                    for field, field_type in fields_to_check.items():
-                        value = client.get(field)
-                        if value is not None and value != "" and value != "--":
-                            # Special handling for strings that should not be "--"
-                            if field_type is str and value == "--":
-                                continue
-                            try:
-                                # Try to convert to the expected type
-                                typed_value = field_type(value)
-                                filtered_client[field] = typed_value
-                            except (ValueError, TypeError):
-                                continue
-
-                    if filtered_client:  # Only add if we have valid data
-                        filtered_clients.append(filtered_client)
-
-                data["clients"] = {"data": filtered_clients}
+            # Check for missing entities before returning data
+            await self._check_missing_entities(data)
 
             return data
 

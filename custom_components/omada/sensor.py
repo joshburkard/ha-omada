@@ -151,46 +151,581 @@ class OmadaIndexSensor(OmadaBaseSensor):
             "device_type": DEVICE_TYPE_NAMES.get(self._device_type, self._device_type)
         }
 
-class OmadaProtocolSensor(OmadaBaseSensor):
-    """Sensor for Omada rule protocols."""
+class OmadaACLRuleSensor(OmadaBaseSensor):
+    """Sensor for ACL rule information."""
+
+    # Type mapping for source and destination
+    TYPE_MAP = {
+        0: "Network",
+        1: "IP Group",
+        2: "IP-Port Group",
+        4: "SSID",
+        6: "IPv6 Group",
+        7: "IPv6-Port Group"
+    }
 
     # Protocol mapping
     PROTOCOL_MAP = {
         1: "ICMP",
+        2: "IGMP",
+        3: "GGP",
+        4: "IP/IPENCAP",
+        5: "ST",
         6: "TCP",
+        7: "CBT",
+        8: "EGP",
+        9: "IGP",
+        10: "BBN-RCC-MON",
+        11: "NVP-II",
+        12: "PUP",
+        13: "ARGUS",
+        14: "EMCON",
+        15: "XNET",
+        16: "CHAOS",
         17: "UDP",
-        256: "ALL",
-        # Add more protocol mappings as needed
+        18: "MUX",
+        19: "DCN-MEAS",
+        20: "HMP",
+        21: "PRM",
+        22: "XNS-IDP",
+        23: "TRUNK-1",
+        24: "TRUNK-2",
+        25: "LEAF-1",
+        26: "LEAF-2",
+        27: "RDP",
+        28: "IRTP",
+        29: "ISO-TP4",
+        30: "NETBLT",
+        31: "MFE-NSP",
+        32: "MERIT-INP",
+        33: "DCCP",
+        34: "3PC",
+        35: "IDPR",
+        36: "XTP",
+        37: "DDP",
+        38: "IDPR-CMTP",
+        39: "TP++",
+        40: "IL",
+        41: "IPv6",
+        42: "SDRP",
+        43: "IPv6-Route",
+        44: "IPv6-Frag",
+        45: "IDRP",
+        46: "RSVP",
+        47: "GRE",
+        48: "DSR",
+        49: "BNA",
+        50: "ESP",
+        51: "AH",
+        52: "I-NLSP",
+        53: "SwIPe",
+        54: "NARP",
+        55: "MOBILE",
+        56: "TLSP",
+        57: "SKIP",
+        58: "IPv6-ICMP",
+        59: "IPv6-NoNxt",
+        60: "IPv6-Opts",
+        61: "Any Host Internal Protocol",
+        62: "CFTP",
+        63: "Any Local Network",
+        64: "SAT-EXPAK",
+        65: "KRYPTOLAN",
+        66: "RVD",
+        67: "IPPC",
+        68: "Any Distributed File System",
+        69: "SAT-MON",
+        70: "VISA",
+        71: "IPCU",
+        72: "CPNX",
+        73: "CPHB",
+        74: "WSN",
+        75: "PVP",
+        76: "BR-SAT-MON",
+        77: "SUN-ND",
+        78: "WB-MON",
+        79: "WB-EXPAK",
+        80: "ISO-IP",
+        81: "VMTP",
+        82: "SECURE-VMTP",
+        83: "VINES",
+        84: "TTP/IPTM",
+        85: "NSFNET-IGP",
+        86: "DGP",
+        87: "TCF",
+        88: "EIGRP",
+        89: "OSPF",
+        90: "Sprite-RPC",
+        91: "LARP",
+        92: "MTP",
+        93: "AX.25",
+        94: "OS",
+        95: "MICP",
+        96: "SCC-SP",
+        97: "ETHERIP",
+        98: "ENCAP",
+        99: "Any Private Encryption",
+        100: "GMTP",
+        101: "IFMP",
+        102: "PNNI",
+        103: "PIM",
+        104: "ARIS",
+        105: "SCPS",
+        106: "QNX",
+        107: "A/N",
+        108: "IPComp",
+        109: "SNP",
+        110: "Compaq-Peer",
+        111: "IPX-in-IP",
+        112: "VRRP",
+        113: "PGM",
+        114: "Any 0-hop Protocol",
+        115: "L2TP",
+        116: "DDX",
+        117: "IATP",
+        118: "STP",
+        119: "SRP",
+        120: "UTI",
+        121: "SMP",
+        122: "SM",
+        123: "PTP",
+        124: "IS-IS over IPv4",
+        125: "FIRE",
+        126: "CRTP",
+        127: "CRUDP",
+        128: "SSCOPMCE",
+        129: "IPLT",
+        130: "SPS",
+        131: "PIPE",
+        132: "SCTP",
+        133: "FC",
+        134: "RSVP-E2E-IGNORE",
+        135: "Mobility Header",
+        136: "UDPLite",
+        137: "MPLS-in-IP",
+        138: "manet",
+        139: "HIP",
+        140: "Shim6",
+        141: "WESP",
+        142: "ROHC",
+        143: "Ethernet",
+        144: "AGGFRAG",
+        145: "NSH",
+        256: "ALL"
     }
 
-    def __init__(self, coordinator, device_data, device_type, rule_type):
-        """Initialize the protocol sensor."""
-        super().__init__(coordinator, device_data, device_type, rule_type, "protocols")
+    def __init__(self, coordinator, rule_data, device_type, attribute):
+        """Initialize the ACL rule sensor."""
+        super().__init__(coordinator, rule_data, device_type, "acl", attribute)
+        self._attribute = attribute
+        self._logger = logging.getLogger(__name__)
 
-    def _format_protocol(self, protocol):
-        """Convert protocol number to string representation."""
-        if isinstance(protocol, str):
-            return protocol
-        return self.PROTOCOL_MAP.get(protocol, f"Protocol {protocol}")
+    def _get_protocol_name(self, protocol_number):
+        """Get protocol name from number with logging."""
+        try:
+            protocol_number = int(protocol_number)
+            protocol_name = self.PROTOCOL_MAP.get(protocol_number)  # Changed from self._protocol_map to self.PROTOCOL_MAP
+            self._logger.debug(
+                "Converting protocol %s to %s (found in map: %s)",
+                protocol_number,
+                protocol_name,
+                protocol_name is not None
+            )
+            return protocol_name or f"Protocol {protocol_number}"
+        except (ValueError, TypeError) as e:
+            self._logger.warning("Error converting protocol number: %s", e)
+            return f"Protocol {protocol_number}"
 
     @property
     def native_value(self):
-        """Return the protocols."""
-        protocols = self._device_data.get("protocols", [])
-        if isinstance(protocols, list):
-            return ", ".join(self._format_protocol(p) for p in protocols)
-        return self._format_protocol(protocols)
+        """Return the state of the sensor."""
+        if not self._device_data:
+            return None
+
+        value = self._device_data.get(self._attribute)
+
+        if self._attribute == "protocols":
+            if isinstance(value, list):
+                protocol_names = []
+                for protocol in value:
+                    try:
+                        protocol_num = int(protocol)
+                        protocol_names.append(self.PROTOCOL_MAP.get(protocol_num, f"Protocol {protocol_num}"))
+                    except (ValueError, TypeError):
+                        protocol_names.append(f"Unknown Protocol ({protocol})")
+                return ", ".join(protocol_names)
+            return str(value)
+        elif self._attribute == "policy":
+            policy_map = {0: "Deny", 1: "Permit"}
+            try:
+                value = int(value)
+                return policy_map.get(value, f"Unknown ({value})")
+            except (TypeError, ValueError):
+                return f"Unknown ({value})"
+        elif self._attribute in ["sourceType", "destinationType"]:
+            try:
+                value = int(value)
+                return self.TYPE_MAP.get(value, f"Unknown Type ({value})")
+            except (TypeError, ValueError):
+                return f"Unknown Type ({value})"
+
+        return value
 
     @property
     def extra_state_attributes(self):
         """Return additional state attributes."""
-        protocols = self._device_data.get("protocols", [])
-        return {
-            "rule_type": self._rule_type,
-            "device_type": DEVICE_TYPE_NAMES.get(self._device_type, self._device_type),
-            "raw_protocols": protocols,
-            "protocol_names": [self._format_protocol(p) for p in protocols] if isinstance(protocols, list) else [self._format_protocol(protocols)]
+        attrs = {
+            "rule_type": "ACL",
+            "device_type": DEVICE_TYPE_NAMES.get(self._device_type, self._device_type)
         }
+
+        # Add raw values for certain attributes
+        if self._attribute in ["policy", "protocols"]:
+            raw_value = self._device_data.get(self._attribute)
+            attrs["raw_value"] = self._device_data.get(self._attribute)
+
+            # Add debug information for protocols
+            #if self._attribute == "protocols" and isinstance(raw_value, list):
+            #    protocol_list = []
+            #    for protocol in raw_value:
+            #        try:
+            #            protocol_num = int(protocol)
+            #            protocol_name = self._protocol_map.get(protocol_num)
+            #            protocol_list.append({
+            #                "number": protocol_num,
+            #                "name": protocol_name or f"Protocol {protocol_num}"
+            #            })
+            #        except (ValueError, TypeError):
+            #            protocol_list.append({
+            #                "number": protocol,
+            #                "name": "Invalid Protocol"
+            #            })
+            #    attrs["protocol_details"] = protocol_list
+
+        return attrs
+
+class OmadaACLSourceDestSensor(OmadaBaseSensor):
+    """Sensor for ACL rule source and destination information."""
+
+    # Type mapping for group types
+    GROUP_TYPE_MAP = {
+        0: "IP Group",
+        1: "IP Port Group",
+        2: "MAC Group",  # Not used currently
+        3: "IPv6 Group",
+        4: "IPv6 Port Group",
+        5: "Country Group",  # Not used currently
+        7: "Domain Group"    # Not used currently
+    }
+
+    def __init__(self, coordinator, rule_data, device_type, attribute):
+        """Initialize the source/destination sensor."""
+        super().__init__(coordinator, rule_data, device_type, "acl", attribute)
+        self._attribute = attribute
+        _LOGGER.debug(
+            "Initializing %s sensor for rule %s with data: %s",
+            attribute,
+            rule_data.get("name"),
+            rule_data
+        )
+
+    def _get_network_info(self, network_ids):
+            """Get network information from coordinator data."""
+            _LOGGER.debug("Getting network info for IDs: %s", network_ids)
+            _LOGGER.debug("Available networks: %s", self.coordinator.data.get("networks", {}).get("result", {}).get("data", []))
+
+            if not self.coordinator.data.get("networks", {}).get("result", {}).get("data"):
+                _LOGGER.warning("No networks data available in coordinator")
+                return None
+
+            network_info = []
+            for network in self.coordinator.data["networks"]["result"]["data"]:
+                if network.get("id") in network_ids:
+                    _LOGGER.debug("Found matching network: %s", network)
+                    network_info.append({
+                        "name": network.get("name", "Unknown Network"),
+                        "id": network.get("id")
+                    })
+
+            return network_info if network_info else None
+
+    def _get_group_info(self, group_ids, expected_type):
+        """Get group information from coordinator data."""
+        _LOGGER.debug("Getting group info for IDs: %s (expected type: %s)", group_ids, expected_type)
+        _LOGGER.debug("Available groups: %s", self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data", []))
+
+        if not self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data"):
+            _LOGGER.warning("No groups data available in coordinator")
+            return None
+
+        group_info = []
+        for group in self.coordinator.data["ip_groups"]["result"]["data"]:
+            if group.get("groupId") in group_ids and group.get("type") == expected_type:
+                _LOGGER.debug("Found matching group: %s", group)
+
+                # Handle different group types
+                if expected_type == 0:  # IP Group
+                    addresses = []
+                    for ip_entry in group.get("ipList", []):
+                        ip = ip_entry.get("ip", "")
+                        mask = ip_entry.get("mask", "")
+                        description = ip_entry.get("description", "")
+                        if ip and mask:
+                            addr = f"{ip}/{mask}"
+                            if description:
+                                addr += f" ({description})"
+                            addresses.append(addr)
+                        elif ip:
+                            addresses.append(ip)
+
+                elif expected_type == 1:  # IP Port Group
+                    addresses = []
+                    for ip_entry in group.get("ipList", []):
+                        ip = ip_entry.get("ip", "")
+                        mask = ip_entry.get("mask", "")
+                        if ip and mask:
+                            addresses.append(f"{ip}/{mask}")
+                        elif ip:
+                            addresses.append(ip)
+                    ports = group.get("portList", [])
+                    port_masks = group.get("portMaskList", [])
+
+                elif expected_type == 3:  # IPv6 Group
+                    addresses = []
+                    for ipv6_entry in group.get("ipv6List", []):
+                        ip = ipv6_entry.get("ip", "")
+                        prefix = ipv6_entry.get("prefix", "")
+                        if ip and prefix:
+                            addresses.append(f"{ip}/{prefix}")
+                        elif ip:
+                            addresses.append(ip)
+
+                elif expected_type == 4:  # IPv6 Port Group
+                    addresses = []
+                    for ipv6_entry in group.get("ipv6List", []):
+                        ip = ipv6_entry.get("ip", "")
+                        prefix = ipv6_entry.get("prefix", "")
+                        if ip and prefix:
+                            addresses.append(f"{ip}/{prefix}")
+                        elif ip:
+                            addresses.append(ip)
+                    ports = group.get("portList", [])
+                    port_masks = group.get("portMaskList", [])
+
+                group_data = {
+                    "name": group.get("name", "Unknown Group"),
+                    "type": self.GROUP_TYPE_MAP.get(expected_type, f"Unknown Type ({expected_type})"),
+                    "addresses": addresses,
+                }
+
+                # Add ports if it's a port group
+                if expected_type in [1, 4]:  # IP Port Group or IPv6 Port Group
+                    group_data["ports"] = ports
+                    group_data["port_masks"] = port_masks
+
+                group_info.append(group_data)
+
+        return group_info if group_info else None
+
+    def _get_ssid_info(self, ssid_ids):
+        """Get SSID information from coordinator data."""
+        _LOGGER.debug("Getting SSID info for IDs: %s", ssid_ids)
+        _LOGGER.debug("Available SSIDs: %s", self.coordinator.data.get("ssids", {}).get("result", {}).get("data", []))
+
+        if not self.coordinator.data.get("ssids", {}).get("result", {}).get("data"):
+            _LOGGER.warning("No SSIDs data available in coordinator")
+            return None
+
+        ssid_info = []
+        for ssid in self.coordinator.data["ssids"]["result"]["data"]:
+            if ssid.get("id") in ssid_ids:
+                _LOGGER.debug("Found matching SSID: %s", ssid)
+                ssid_info.append({
+                    "name": ssid.get("name", "Unknown SSID"),
+                    "wlan_name": ssid.get("wlanName", "Unknown WLAN"),
+                    "id": ssid.get("id")
+                })
+
+        return ssid_info if ssid_info else None
+
+    def _get_source_dest_value(self, type_value, ids_list):
+        """Get the appropriate source/destination value based on type."""
+        try:
+            type_value = int(type_value)
+            _LOGGER.debug(
+                "Getting value for type %s with IDs: %s",
+                type_value,
+                ids_list
+            )
+
+            if type_value == 0:  # Network
+                networks_info = self._get_network_info(ids_list)
+                if networks_info:
+                    return " | ".join([
+                        f"{network['name']}"
+                        for network in networks_info
+                    ])
+                return f"Unknown Network(s) ({', '.join(ids_list)})"
+
+            elif type_value == 1:  # IP Group
+                groups_info = self._get_group_info(ids_list, 0)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['addresses'])})"
+                        for group in groups_info
+                    ])
+                return f"Unknown IP Group(s) ({', '.join(ids_list)})"
+
+            elif type_value == 2:  # IP-Port Group
+                groups_info = self._get_group_info(ids_list, 1)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['addresses'])}) Ports: {', '.join(group['ports'])}"
+                        for group in groups_info
+                    ])
+                return f"Unknown IP-Port Group(s) ({', '.join(ids_list)})"
+            elif type_value == 4:  # SSID
+                ssids_info = self._get_ssid_info(ids_list)
+                if ssids_info:
+                    return " | ".join([
+                        f"{ssid['name']} ({ssid['wlan_name']})"
+                        for ssid in ssids_info
+                    ])
+                return f"Unknown SSID(s) ({', '.join(ids_list)})"
+            elif type_value == 6:  # IPv6 Group
+                groups_info = self._get_group_info(ids_list, 3)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['addresses'])})"
+                        for group in groups_info
+                    ])
+                return f"Unknown IPv6 Group(s) ({', '.join(ids_list)})"
+
+            elif type_value == 7:  # IPv6-Port Group
+                groups_info = self._get_group_info(ids_list, 4)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['addresses'])}) Ports: {', '.join(group['ports'])}"
+                        for group in groups_info
+                    ])
+                return f"Unknown IPv6-Port Group(s) ({', '.join(ids_list)})"
+
+            else:
+                return f"Unknown Type {type_value} ({', '.join(ids_list)})"
+
+        except Exception as e:
+            _LOGGER.error("Error processing type %s: %s", type_value, str(e))
+            return f"Error: {str(e)}"
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if not self._device_data:
+            return None
+
+        _LOGGER.info(
+            "Getting native value for %s with data: %s",
+            self._attribute,
+            self._device_data
+        )
+
+        try:
+            if self._attribute == "source":
+                type_value = self._device_data.get("sourceType")
+                ids_list = self._device_data.get("sourceIds", [])
+                return self._get_source_dest_value(type_value, ids_list)
+            elif self._attribute == "destination":
+                type_value = self._device_data.get("destinationType")
+                ids_list = self._device_data.get("destinationIds", [])
+                return self._get_source_dest_value(type_value, ids_list)
+        except Exception as e:
+            _LOGGER.error(
+                "Error getting value for %s: %s",
+                self._attribute,
+                str(e)
+            )
+            return f"Error: {str(e)}"
+
+        return None
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        attrs = {
+            "rule_type": "ACL",
+            "device_type": DEVICE_TYPE_NAMES.get(self._device_type, self._device_type)
+        }
+
+        if self._attribute == "source":
+            type_value = self._device_data.get("sourceType")
+            ids_list = self._device_data.get("sourceIds", [])
+            attrs.update({
+                "source_type": type_value,
+                "source_ids": ids_list,
+            })
+
+            # Add type-specific details
+            if type_value == 0:  # Network
+                networks_info = self._get_network_info(ids_list)
+                if networks_info:
+                    attrs["networks"] = networks_info
+            elif type_value == 1:  # IP Group
+                groups_info = self._get_group_info(ids_list, 0)
+                if groups_info:
+                    attrs["ip_groups"] = groups_info
+            elif type_value == 2:  # IP-Port Group
+                groups_info = self._get_group_info(ids_list, 1)
+                if groups_info:
+                    attrs["ip_port_groups"] = groups_info
+            elif type_value == 4:  # SSID
+                ssids_info = self._get_ssid_info(ids_list)
+                if ssids_info:
+                    attrs["ssids"] = ssids_info
+            elif type_value == 6:  # IPv6 Group
+                groups_info = self._get_group_info(ids_list, 3)
+                if groups_info:
+                    attrs["ipv6_groups"] = groups_info
+            elif type_value == 7:  # IPv6-Port Group
+                groups_info = self._get_group_info(ids_list, 4)
+                if groups_info:
+                    attrs["ipv6_port_groups"] = groups_info
+
+        # Similar structure for destination
+        elif self._attribute == "destination":
+            # ... same structure as source, just with destination attributes
+            type_value = self._device_data.get("destinationType")
+            ids_list = self._device_data.get("destinationIds", [])
+            attrs.update({
+                "destination_type": type_value,
+                "destination_ids": ids_list,
+            })
+
+            if type_value == 0:  # Network
+                networks_info = self._get_network_info(ids_list)
+                if networks_info:
+                    attrs["networks"] = networks_info
+            elif type_value == 1:  # IP Group
+                groups_info = self._get_group_info(ids_list, 0)
+                if groups_info:
+                    attrs["ip_groups"] = groups_info
+            elif type_value == 2:  # IP-Port Group
+                groups_info = self._get_group_info(ids_list, 1)
+                if groups_info:
+                    attrs["ip_port_groups"] = groups_info
+            elif type_value == 4:  # SSID
+                ssids_info = self._get_ssid_info(ids_list)
+                if ssids_info:
+                    attrs["ssids"] = ssids_info
+            elif type_value == 6:  # IPv6 Group
+                groups_info = self._get_group_info(ids_list, 3)
+                if groups_info:
+                    attrs["ipv6_groups"] = groups_info
+            elif type_value == 7:  # IPv6-Port Group
+                groups_info = self._get_group_info(ids_list, 4)
+                if groups_info:
+                    attrs["ipv6_port_groups"] = groups_info
+
+        return attrs
 
 class OmadaPolicySensor(OmadaBaseSensor):
     """Sensor for Omada rule policy."""
@@ -483,6 +1018,199 @@ class OmadaClientRadioSensor(OmadaClientSensor):
                 return f"Unknown ({radio_id})"
         return None
 
+class OmadaURLFilterSensor(OmadaBaseSensor):
+    """Sensor for URL filter information."""
+
+    SOURCE_TYPE_MAP = {
+        0: "Network",
+        1: "IP Group",
+        2: "SSID"
+    }
+
+    POLICY_MAP = {
+        0: "Deny",
+        1: "Permit"
+    }
+    def __init__(self, coordinator, filter_data, filter_type, attribute):
+        """Initialize the URL filter sensor."""
+        super().__init__(coordinator, filter_data, filter_type, "url_filter", attribute)
+        self._attribute = attribute
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if not self._device_data:
+            return None
+
+        if self._attribute == "status":
+            value = self._device_data.get(self._attribute)
+            return "Enabled" if value else "Disabled"
+        elif self._attribute == "policy":
+            value = self._device_data.get("mode")  # Get value from mode attribute
+            try:
+                value = int(value)
+                return self.POLICY_MAP.get(value, f"Unknown ({value})")
+            except (TypeError, ValueError):
+                return f"Unknown ({value})"
+        elif self._attribute == "sourceType":
+            value = self._device_data.get(self._attribute)
+            try:
+                value = int(value)
+                return self.SOURCE_TYPE_MAP.get(value, f"Unknown Type ({value})")
+            except (TypeError, ValueError):
+                return f"Unknown Type ({value})"
+        else:
+            return self._device_data.get(self._attribute)
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        attrs = {
+            "rule_type": "URL Filter",
+            "filter_type": self._device_type
+        }
+
+        # Add raw values for certain attributes
+        if self._attribute == "policy":
+            attrs["raw_value"] = self._device_data.get("mode")
+
+        # Add URLs if they exist
+        if "urls" in self._device_data:
+            attrs["urls"] = self._device_data["urls"]
+
+        return attrs
+
+class OmadaURLFilterSourceSensor(OmadaBaseSensor):
+    """Sensor for URL filter source information."""
+
+    def __init__(self, coordinator, filter_data, filter_type, attribute):
+        """Initialize the URL filter source sensor."""
+        super().__init__(coordinator, filter_data, filter_type, "url_filter", attribute)
+        self._attribute = attribute
+
+    def _get_network_info(self, network_ids):
+        """Get network information from coordinator data."""
+        if not self.coordinator.data.get("networks", {}).get("result", {}).get("data"):
+            return None
+
+        network_info = []
+        for network in self.coordinator.data["networks"]["result"]["data"]:
+            if network.get("id") in network_ids:
+                network_info.append({
+                    "name": network.get("name", "Unknown Network"),
+                    "id": network.get("id")
+                })
+        return network_info if network_info else None
+
+    def _get_ip_group_info(self, group_ids):
+        """Get IP group information from coordinator data."""
+        if not self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data"):
+            return None
+
+        group_info = []
+        for group in self.coordinator.data["ip_groups"]["result"]["data"]:
+            if group.get("groupId") in group_ids and group.get("type") == 0:  # type 0 for IP groups
+                ips = []
+                for ip_entry in group.get("ipList", []):
+                    ip = ip_entry.get("ip", "")
+                    mask = ip_entry.get("mask", "")
+                    if ip and mask:
+                        ips.append(f"{ip}/{mask}")
+                    elif ip:
+                        ips.append(ip)
+                group_info.append({
+                    "name": group.get("name", "Unknown Group"),
+                    "ips": ips,
+                })
+        return group_info if group_info else None
+
+    def _get_ssid_info(self, ssid_ids):
+        """Get SSID information from coordinator data."""
+        if not self.coordinator.data.get("ssids", {}).get("result", {}).get("data"):
+            return None
+
+        ssid_info = []
+        for ssid in self.coordinator.data["ssids"]["result"]["data"]:
+            if ssid.get("id") in ssid_ids:
+                ssid_info.append({
+                    "name": ssid.get("name", "Unknown SSID"),
+                    "wlan_name": ssid.get("wlanName", "Unknown WLAN"),
+                    "id": ssid.get("id")
+                })
+        return ssid_info if ssid_info else None
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if not self._device_data:
+            return None
+
+        source_type = self._device_data.get("sourceType")
+        source_ids = self._device_data.get("sourceIds", [])
+
+        try:
+            source_type = int(source_type)
+            if source_type == 0:  # Network
+                networks_info = self._get_network_info(source_ids)
+                if networks_info:
+                    return " | ".join([
+                        f"{network['name']}"
+                        for network in networks_info
+                    ])
+            elif source_type == 1:  # IP Group
+                groups_info = self._get_ip_group_info(source_ids)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['ips'])})"
+                        for group in groups_info
+                    ])
+            elif source_type == 2:  # SSID
+                ssids_info = self._get_ssid_info(source_ids)
+                if ssids_info:
+                    return " | ".join([
+                        f"{ssid['name']} ({ssid['wlan_name']})"
+                        for ssid in ssids_info
+                    ])
+
+            return f"Unknown ({', '.join(source_ids)})"
+
+        except Exception as e:
+            _LOGGER.error("Error processing source type %s: %s", source_type, str(e))
+            return f"Error: {str(e)}"
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        attrs = {
+            "rule_type": "URL Filter",
+            "filter_type": self._device_type,
+            "source_type": self._device_data.get("sourceType"),
+            "source_ids": self._device_data.get("sourceIds", [])
+        }
+
+        # Add type-specific details
+        source_type = self._device_data.get("sourceType")
+        source_ids = self._device_data.get("sourceIds", [])
+
+        try:
+            source_type = int(source_type)
+            if source_type == 0:  # Network
+                networks_info = self._get_network_info(source_ids)
+                if networks_info:
+                    attrs["networks"] = networks_info
+            elif source_type == 1:  # IP Group
+                groups_info = self._get_ip_group_info(source_ids)
+                if groups_info:
+                    attrs["ip_groups"] = groups_info
+            elif source_type == 2:  # SSID
+                ssids_info = self._get_ssid_info(source_ids)
+                if ssids_info:
+                    attrs["ssids"] = ssids_info
+        except (TypeError, ValueError):
+            pass
+
+        return attrs
+
 def create_client_sensors(coordinator, client):
     """Create sensors for a client based on available data."""
     sensors = []
@@ -547,32 +1275,68 @@ def create_device_sensors(coordinator, device):
             sensors.append(sensor_class(coordinator, device, name, attribute))
     return sensors
 
-def create_url_filter_sensors(coordinator, url_filter):
-    """Create sensors for a URL filter based on available data."""
-    sensors = []
-    sensor_definitions = [
-        (OmadaBaseSensor, "url_filter_name", "name"),
-        (OmadaBaseSensor, "url_filter_status", "status"),
-        # Add more URL filter sensors as needed
-    ]
-    for sensor_class, name, attribute in sensor_definitions:
-        if attribute is not None and attribute not in url_filter:
-            continue
-        sensors.append(sensor_class(coordinator, url_filter, "url_filter", "url_filter", name))
-    return sensors
-
-def create_acl_rule_sensors(coordinator, acl_rule):
+def create_acl_rule_sensors(coordinator, rule, device_type):
     """Create sensors for an ACL rule based on available data."""
     sensors = []
+
+    # Define available sensors and their corresponding attributes
     sensor_definitions = [
-        (OmadaBaseSensor, "acl_rule_name", "name"),
-        (OmadaBaseSensor, "acl_rule_status", "status"),
-        # Add more ACL rule sensors as needed
+        (OmadaACLRuleSensor, "name", "Name", "name"),
+        (OmadaACLRuleSensor, "policy", "Policy", "policy"),
+        (OmadaACLRuleSensor, "protocols", "Protocols", "protocols"),
+        (OmadaACLRuleSensor, "src_ip", "Source IP", "srcIp"),
+        (OmadaACLRuleSensor, "dst_ip", "Destination IP", "dstIp"),
+        (OmadaACLRuleSensor, "src_port", "Source Port", "srcPort"),
+        (OmadaACLRuleSensor, "dst_port", "Destination Port", "dstPort"),
+        (OmadaACLRuleSensor, "status", "Status", "status"),
+        (OmadaACLRuleSensor, "source_type", "Source Type", "sourceType"),
+        (OmadaACLRuleSensor, "destination_type", "Destination Type", "destinationType")
     ]
-    for sensor_class, name, attribute in sensor_definitions:
-        if attribute is not None and attribute not in acl_rule:
-            continue
-        sensors.append(sensor_class(coordinator, acl_rule, "acl", "acl", name))
+
+    # First add the basic sensors
+    for sensor_class, name, display_name, attribute in sensor_definitions:
+        if attribute in rule:
+            sensor = sensor_class(coordinator, rule, device_type, attribute)
+            _LOGGER.debug("Creating sensor %s for attribute %s", name, attribute)
+            sensor._attr_name = display_name  # Set the display name explicitly
+            sensors.append(sensor)
+
+    # Then separately handle source/destination sensors
+    if "sourceType" in rule and "sourceIds" in rule:
+        _LOGGER.debug("Creating source sensor for rule %s", rule.get("name"))
+        sensors.append(OmadaACLSourceDestSensor(coordinator, rule, device_type, "source"))
+
+    if "destinationType" in rule and "destinationIds" in rule:
+        _LOGGER.debug("Creating destination sensor for rule %s", rule.get("name"))
+        sensors.append(OmadaACLSourceDestSensor(coordinator, rule, device_type, "destination"))
+
+    _LOGGER.debug("Created total %d sensors for rule %s", len(sensors), rule.get("name"))
+    return sensors
+
+def create_url_filter_sensors(coordinator, filter_rule, filter_type):
+    """Create sensors for a URL filter based on available data."""
+    sensors = []
+
+    # Define available sensors and their corresponding attributes
+    sensor_definitions = [
+        (OmadaURLFilterSensor, "name", "Name", "name"),        # name, display_name, attribute
+        (OmadaURLFilterSensor, "status", "Status", "status"),
+        (OmadaURLFilterSensor, "policy", "Policy", "mode"),    # Will show as "Policy" but use mode attribute
+        (OmadaURLFilterSensor, "description", "Description", "description"),
+        (OmadaURLFilterSensor, "sourceType", "Source Type", "sourceType"),
+        (OmadaURLFilterSourceSensor, "source", "Source", "source")
+    ]
+
+    for sensor_class, name, display_name, attribute in sensor_definitions:
+        if attribute == "source":
+            # For source sensor, check if we have sourceType and sourceIds
+            if "sourceType" in filter_rule and "sourceIds" in filter_rule:
+                sensors.append(sensor_class(coordinator, filter_rule, filter_type, name))
+        elif attribute in filter_rule:
+            sensor = sensor_class(coordinator, filter_rule, filter_type, name)
+            sensor._attr_name = display_name  # Set the display name explicitly
+            sensors.append(sensor)
+
     return sensors
 
 async def async_setup_entry(
@@ -589,6 +1353,9 @@ async def async_setup_entry(
         """Update entities with new clients, devices, URL filters, and ACL rules."""
         new_entities = []
 
+        # Add debug logging
+        _LOGGER.debug("Coordinator data: %s", coordinator.data)
+
         # Create sensors for clients
         for client in coordinator.data.get("clients", {}).get("data", []):
             new_entities.extend(create_client_sensors(coordinator, client))
@@ -597,15 +1364,24 @@ async def async_setup_entry(
         for device in coordinator.data.get("devices", {}).get("data", []):
             new_entities.extend(create_device_sensors(coordinator, device))
 
-        # Create sensors for URL filters
-        for url_filter in coordinator.data.get("url_filters", {}).get("data", []):
-            new_entities.extend(create_url_filter_sensors(coordinator, url_filter))
-
         # Create sensors for ACL rules
-        for acl_rule in coordinator.data.get("acl_rules", {}).get("data", []):
-            new_entities.extend(create_acl_rule_sensors(coordinator, acl_rule))
+        for device_type, rules in coordinator.data.get("acl_rules", {}).items():
+            _LOGGER.debug("Processing ACL rules for device type %s: %s", device_type, rules)
+            for rule in rules:
+                created_sensors = create_acl_rule_sensors(coordinator, rule, device_type)
+                _LOGGER.debug("Created sensors for rule %s: %s", rule.get("name"), created_sensors)
+                new_entities.extend(created_sensors)
 
-        async_add_entities(new_entities)
+        # Create sensors for URL filters
+        for filter_type, filters in coordinator.data.get("url_filters", {}).items():
+            for filter_rule in filters:
+                new_entities.extend(create_url_filter_sensors(coordinator, filter_rule, filter_type))
+
+        if new_entities:
+            _LOGGER.debug("Adding new entities: %s", new_entities)
+            async_add_entities(new_entities)
+        else:
+            _LOGGER.warning("No new entities found to add")
 
     coordinator.async_add_listener(update_entities)
     update_entities()
