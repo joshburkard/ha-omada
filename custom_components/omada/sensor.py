@@ -1018,10 +1018,19 @@ class OmadaClientRadioSensor(OmadaClientSensor):
                 return f"Unknown ({radio_id})"
         return None
 
-
 class OmadaURLFilterSensor(OmadaBaseSensor):
     """Sensor for URL filter information."""
 
+    SOURCE_TYPE_MAP = {
+        0: "Network",
+        1: "IP Group",
+        2: "SSID"
+    }
+
+    POLICY_MAP = {
+        0: "Deny",
+        1: "Permit"
+    }
     def __init__(self, coordinator, filter_data, filter_type, attribute):
         """Initialize the URL filter sensor."""
         super().__init__(coordinator, filter_data, filter_type, "url_filter", attribute)
@@ -1033,13 +1042,25 @@ class OmadaURLFilterSensor(OmadaBaseSensor):
         if not self._device_data:
             return None
 
-        value = self._device_data.get(self._attribute)
         if self._attribute == "status":
+            value = self._device_data.get(self._attribute)
             return "Enabled" if value else "Disabled"
-        elif self._attribute == "mode":
-            mode_map = {0: "Block Listed", 1: "Allow Listed"}
-            return mode_map.get(value, f"Unknown ({value})")
-        return value
+        elif self._attribute == "policy":
+            value = self._device_data.get("mode")  # Get value from mode attribute
+            try:
+                value = int(value)
+                return self.POLICY_MAP.get(value, f"Unknown ({value})")
+            except (TypeError, ValueError):
+                return f"Unknown ({value})"
+        elif self._attribute == "sourceType":
+            value = self._device_data.get(self._attribute)
+            try:
+                value = int(value)
+                return self.SOURCE_TYPE_MAP.get(value, f"Unknown Type ({value})")
+            except (TypeError, ValueError):
+                return f"Unknown Type ({value})"
+        else:
+            return self._device_data.get(self._attribute)
 
     @property
     def extra_state_attributes(self):
@@ -1049,9 +1070,144 @@ class OmadaURLFilterSensor(OmadaBaseSensor):
             "filter_type": self._device_type
         }
 
+        # Add raw values for certain attributes
+        if self._attribute == "policy":
+            attrs["raw_value"] = self._device_data.get("mode")
+
         # Add URLs if they exist
         if "urls" in self._device_data:
             attrs["urls"] = self._device_data["urls"]
+
+        return attrs
+
+class OmadaURLFilterSourceSensor(OmadaBaseSensor):
+    """Sensor for URL filter source information."""
+
+    def __init__(self, coordinator, filter_data, filter_type, attribute):
+        """Initialize the URL filter source sensor."""
+        super().__init__(coordinator, filter_data, filter_type, "url_filter", attribute)
+        self._attribute = attribute
+
+    def _get_network_info(self, network_ids):
+        """Get network information from coordinator data."""
+        if not self.coordinator.data.get("networks", {}).get("result", {}).get("data"):
+            return None
+
+        network_info = []
+        for network in self.coordinator.data["networks"]["result"]["data"]:
+            if network.get("id") in network_ids:
+                network_info.append({
+                    "name": network.get("name", "Unknown Network"),
+                    "id": network.get("id")
+                })
+        return network_info if network_info else None
+
+    def _get_ip_group_info(self, group_ids):
+        """Get IP group information from coordinator data."""
+        if not self.coordinator.data.get("ip_groups", {}).get("result", {}).get("data"):
+            return None
+
+        group_info = []
+        for group in self.coordinator.data["ip_groups"]["result"]["data"]:
+            if group.get("groupId") in group_ids and group.get("type") == 0:  # type 0 for IP groups
+                ips = []
+                for ip_entry in group.get("ipList", []):
+                    ip = ip_entry.get("ip", "")
+                    mask = ip_entry.get("mask", "")
+                    if ip and mask:
+                        ips.append(f"{ip}/{mask}")
+                    elif ip:
+                        ips.append(ip)
+                group_info.append({
+                    "name": group.get("name", "Unknown Group"),
+                    "ips": ips,
+                })
+        return group_info if group_info else None
+
+    def _get_ssid_info(self, ssid_ids):
+        """Get SSID information from coordinator data."""
+        if not self.coordinator.data.get("ssids", {}).get("result", {}).get("data"):
+            return None
+
+        ssid_info = []
+        for ssid in self.coordinator.data["ssids"]["result"]["data"]:
+            if ssid.get("id") in ssid_ids:
+                ssid_info.append({
+                    "name": ssid.get("name", "Unknown SSID"),
+                    "wlan_name": ssid.get("wlanName", "Unknown WLAN"),
+                    "id": ssid.get("id")
+                })
+        return ssid_info if ssid_info else None
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        if not self._device_data:
+            return None
+
+        source_type = self._device_data.get("sourceType")
+        source_ids = self._device_data.get("sourceIds", [])
+
+        try:
+            source_type = int(source_type)
+            if source_type == 0:  # Network
+                networks_info = self._get_network_info(source_ids)
+                if networks_info:
+                    return " | ".join([
+                        f"{network['name']}"
+                        for network in networks_info
+                    ])
+            elif source_type == 1:  # IP Group
+                groups_info = self._get_ip_group_info(source_ids)
+                if groups_info:
+                    return " | ".join([
+                        f"{group['name']} ({', '.join(group['ips'])})"
+                        for group in groups_info
+                    ])
+            elif source_type == 2:  # SSID
+                ssids_info = self._get_ssid_info(source_ids)
+                if ssids_info:
+                    return " | ".join([
+                        f"{ssid['name']} ({ssid['wlan_name']})"
+                        for ssid in ssids_info
+                    ])
+
+            return f"Unknown ({', '.join(source_ids)})"
+
+        except Exception as e:
+            _LOGGER.error("Error processing source type %s: %s", source_type, str(e))
+            return f"Error: {str(e)}"
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional state attributes."""
+        attrs = {
+            "rule_type": "URL Filter",
+            "filter_type": self._device_type,
+            "source_type": self._device_data.get("sourceType"),
+            "source_ids": self._device_data.get("sourceIds", [])
+        }
+
+        # Add type-specific details
+        source_type = self._device_data.get("sourceType")
+        source_ids = self._device_data.get("sourceIds", [])
+
+        try:
+            source_type = int(source_type)
+            if source_type == 0:  # Network
+                networks_info = self._get_network_info(source_ids)
+                if networks_info:
+                    attrs["networks"] = networks_info
+            elif source_type == 1:  # IP Group
+                groups_info = self._get_ip_group_info(source_ids)
+                if groups_info:
+                    attrs["ip_groups"] = groups_info
+            elif source_type == 2:  # SSID
+                ssids_info = self._get_ssid_info(source_ids)
+                if ssids_info:
+                    attrs["ssids"] = ssids_info
+        except (TypeError, ValueError):
+            pass
 
         return attrs
 
@@ -1119,30 +1275,30 @@ def create_device_sensors(coordinator, device):
             sensors.append(sensor_class(coordinator, device, name, attribute))
     return sensors
 
-
 def create_acl_rule_sensors(coordinator, rule, device_type):
     """Create sensors for an ACL rule based on available data."""
     sensors = []
 
     # Define available sensors and their corresponding attributes
     sensor_definitions = [
-        (OmadaACLRuleSensor, "name", "name"),
-        (OmadaACLRuleSensor, "policy", "policy"),
-        (OmadaACLRuleSensor, "protocols", "protocols"),
-        (OmadaACLRuleSensor, "src_ip", "srcIp"),
-        (OmadaACLRuleSensor, "dst_ip", "dstIp"),
-        (OmadaACLRuleSensor, "src_port", "srcPort"),
-        (OmadaACLRuleSensor, "dst_port", "dstPort"),
-        (OmadaACLRuleSensor, "status", "status"),
-        (OmadaACLRuleSensor, "Source Type", "sourceType"),
-        (OmadaACLRuleSensor, "Destination Type", "destinationType")
+        (OmadaACLRuleSensor, "name", "Name", "name"),
+        (OmadaACLRuleSensor, "policy", "Policy", "policy"),
+        (OmadaACLRuleSensor, "protocols", "Protocols", "protocols"),
+        (OmadaACLRuleSensor, "src_ip", "Source IP", "srcIp"),
+        (OmadaACLRuleSensor, "dst_ip", "Destination IP", "dstIp"),
+        (OmadaACLRuleSensor, "src_port", "Source Port", "srcPort"),
+        (OmadaACLRuleSensor, "dst_port", "Destination Port", "dstPort"),
+        (OmadaACLRuleSensor, "status", "Status", "status"),
+        (OmadaACLRuleSensor, "source_type", "Source Type", "sourceType"),
+        (OmadaACLRuleSensor, "destination_type", "Destination Type", "destinationType")
     ]
 
     # First add the basic sensors
-    for sensor_class, name, attribute in sensor_definitions:
+    for sensor_class, name, display_name, attribute in sensor_definitions:
         if attribute in rule:
             sensor = sensor_class(coordinator, rule, device_type, attribute)
             _LOGGER.debug("Creating sensor %s for attribute %s", name, attribute)
+            sensor._attr_name = display_name  # Set the display name explicitly
             sensors.append(sensor)
 
     # Then separately handle source/destination sensors
@@ -1163,15 +1319,23 @@ def create_url_filter_sensors(coordinator, filter_rule, filter_type):
 
     # Define available sensors and their corresponding attributes
     sensor_definitions = [
-        (OmadaURLFilterSensor, "name", "name"),
-        (OmadaURLFilterSensor, "status", "status"),
-        (OmadaURLFilterSensor, "mode", "mode"),
-        (OmadaURLFilterSensor, "description", "description")
+        (OmadaURLFilterSensor, "name", "Name", "name"),        # name, display_name, attribute
+        (OmadaURLFilterSensor, "status", "Status", "status"),
+        (OmadaURLFilterSensor, "policy", "Policy", "mode"),    # Will show as "Policy" but use mode attribute
+        (OmadaURLFilterSensor, "description", "Description", "description"),
+        (OmadaURLFilterSensor, "Source Type", "Source Type", "sourceType"),
+        (OmadaURLFilterSourceSensor, "source", "Source", "source")
     ]
 
-    for sensor_class, name, attribute in sensor_definitions:
-        if attribute in filter_rule:
-            sensors.append(sensor_class(coordinator, filter_rule, filter_type, attribute))
+    for sensor_class, name, display_name, attribute in sensor_definitions:
+        if attribute == "source":
+            # For source sensor, check if we have sourceType and sourceIds
+            if "sourceType" in filter_rule and "sourceIds" in filter_rule:
+                sensors.append(sensor_class(coordinator, filter_rule, filter_type, name))
+        elif attribute in filter_rule:
+            sensor = sensor_class(coordinator, filter_rule, filter_type, name)
+            sensor._attr_name = display_name  # Set the display name explicitly
+            sensors.append(sensor)
 
     return sensors
 
