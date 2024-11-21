@@ -30,28 +30,33 @@ class OmadaBaseSwitch(CoordinatorEntity, SwitchEntity):
         self._rule_type = rule_type
         self.entity_category = EntityCategory.CONFIG
 
-        # Get device type name
-        if isinstance(device_type, int):
-            device_type_name = DEVICE_TYPE_NAMES.get(device_type, str(device_type))
-        else:
-            device_type_name = str(device_type).capitalize()
-
-        # Generate device name and ID
+        # Keep original case for display name
         if "name" in device_data:
             self._device_name = device_data["name"]
-            self._device_id = f"{device_data['name']}_{device_type}"
+            device_name_lower = self._device_name.lower()
         elif "policyName" in device_data:
             self._device_name = device_data["policyName"]
-            self._device_id = f"{device_data['policyName']}_{device_type}"
+            device_name_lower = self._device_name.lower()
         else:
             self._device_name = str(device_data.get('id', ''))
-            self._device_id = f"{device_type}_{device_data.get('id', '')}"
+            device_name_lower = self._device_name.lower()
 
-        # Create unique IDs for device and entity
-        self._device_unique_id = f"omada_{self._rule_type}_{self._device_id}"
+        # Sanitize device name for entity_id (lowercase)
+        sanitized_name = device_name_lower.replace(' ', '_').replace('-', '_')
+
+        # Set entity_id based on rule_type
+        if rule_type == "acl":
+            # Map device type number to string for ACL rules
+            type_map = {0: "gateway", 1: "switch", 2: "eap"}
+            device_type_str = type_map.get(device_type, "unknown")
+            self.entity_id = f"switch.om_aclrule_{device_type_str}_{sanitized_name}_enabled"
+            self._device_unique_id = f"omada_acl_{device_type_str}_{sanitized_name}"
+        elif rule_type == "url_filter":
+            # For URL filters, device_type is already a string ('gateway' or 'ap')
+            self.entity_id = f"switch.om_urlfilter_{device_type}_{sanitized_name}_enabled"
+            self._device_unique_id = f"omada_url_filter_{device_type}_{sanitized_name}"
+
         self._attr_unique_id = f"{self._device_unique_id}_enabled"
-
-        # Set entity name
         self._attr_name = "Enabled"
 
     @property
