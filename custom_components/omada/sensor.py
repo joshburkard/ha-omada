@@ -26,28 +26,33 @@ class OmadaBaseSensor(CoordinatorEntity, SensorEntity):
         self._sensor_type = sensor_type
         self.entity_category = EntityCategory.DIAGNOSTIC
 
-        # Generate device name and ID
-        if isinstance(device_type, int):
-            device_type_name = DEVICE_TYPE_NAMES.get(device_type, str(device_type))
-        else:
-            device_type_name = str(device_type).capitalize()
-
-        # Generate device name and ID (without device type name)
+        # Keep original case for display name
         if "name" in device_data:
             self._device_name = device_data["name"]
-            self._device_id = f"{device_data['name']}_{device_type}"
+            device_name_lower = self._device_name.lower()
         elif "policyName" in device_data:
             self._device_name = device_data["policyName"]
-            self._device_id = f"{device_data['policyName']}_{device_type}"
+            device_name_lower = self._device_name.lower()
         else:
             self._device_name = str(device_data.get('id', ''))
-            self._device_id = f"{device_type}_{device_data.get('id', '')}"
+            device_name_lower = self._device_name.lower()
 
-        # Create unique IDs for device and entity
-        self._device_unique_id = f"omada_{rule_type}_{self._device_id}"
+        # Sanitize device name for entity_id (lowercase)
+        sanitized_name = device_name_lower.replace(' ', '_').replace('-', '_')
+
+        # Set appropriate entity_id based on rule_type
+        if rule_type == "acl":
+            # Map device type number to string for ACL rules
+            type_map = {0: "gateway", 1: "switch", 2: "eap"}
+            device_type_str = type_map.get(device_type, "unknown")
+            self.entity_id = f"sensor.om_aclrule_{device_type_str}_{sanitized_name}_{sensor_type}"
+            self._device_unique_id = f"omada_acl_{device_type_str}_{sanitized_name}"
+        elif rule_type == "url_filter":
+            # For URL filters, device_type is already a string ('gateway' or 'ap')
+            self.entity_id = f"sensor.om_urlfilter_{device_type}_{sanitized_name}_{sensor_type}"
+            self._device_unique_id = f"omada_url_filter_{device_type}_{sanitized_name}"
+
         self._attr_unique_id = f"{self._device_unique_id}_{sensor_type}"
-
-        # Set entity name
         self._attr_name = sensor_type.replace('_', ' ').title()
 
     def _get_updated_data(self):
@@ -768,18 +773,16 @@ class OmadaDeviceSensor(CoordinatorEntity, SensorEntity):
 
         # Clean up MAC address for ID
         self._device_mac = device_data.get("mac", "").replace(':', '').replace('-', '').lower()
-        self._device_name = device_data.get("name", device_data.get("mac", "Unknown"))
+        self._device_name = device_data.get("name", device_data.get("mac", "Unknown")).lower()
         self._device_unique_id = f"omada_device_{self._device_mac}"
         self._attr_unique_id = f"{self._device_unique_id}_{sensor_type}"
 
+        # Set entity ID with the new pattern
+        sanitized_name = self._device_name.replace(' ', '_').replace('-', '_')
+        self.entity_id = f"sensor.om_device_{sanitized_name}_{sensor_type}"
+
         # Set entity name
         self._attr_name = sensor_type.replace('_', ' ').title()
-
-        _LOGGER.debug(
-            "Initializing device sensor %s for device %s",
-            self._attr_name,
-            self._device_name
-        )
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -859,9 +862,13 @@ class OmadaClientSensor(CoordinatorEntity, SensorEntity):
 
         # Clean up MAC address for ID
         self._client_mac = client_data.get("mac", "").replace(':', '').replace('-', '').lower()
-        self._client_name = client_data.get("name", client_data.get("mac", "Unknown"))
+        self._client_name = client_data.get("name", client_data.get("mac", "Unknown")).lower()
         self._device_unique_id = f"omada_client_{self._client_mac}"
         self._attr_unique_id = f"{self._device_unique_id}_{sensor_type}"
+
+        # Set entity ID with the new pattern
+        sanitized_name = self._client_name.replace(' ', '_').replace('-', '_')
+        self.entity_id = f"sensor.om_client_{sanitized_name}_{sensor_type}"
 
         # Set entity name
         self._attr_name = sensor_type.replace('_', ' ').title()

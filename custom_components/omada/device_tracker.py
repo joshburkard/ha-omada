@@ -22,19 +22,36 @@ class OmadaDeviceTracker(CoordinatorEntity, TrackerEntity):
         self._device_data = device_data
         self._device_type = device_type
         self._device_mac = device_data.get("mac", "").replace(':', '').replace('-', '').lower()
+
+        # Keep original case for display name
         self._device_name = device_data.get("name", device_data.get("mac", "Unknown"))
-        self._device_unique_id = f"omada_device_{self._device_mac}"
+        # Lowercase version for entity_id
+        device_name_lower = self._device_name.lower()
+
+        # Map device type to string
+        type_map = {0: "gateway", 1: "switch", 2: "eap"}
+        device_type_str = type_map.get(device_type, "unknown")
+
+        self._device_unique_id = f"omada_device_{device_type_str}_{self._device_mac}"
         self._attr_unique_id = self._device_unique_id
-        self._attr_name = self._device_name
+
+        # Set new entity_id format using lowercase name
+        sanitized_name = device_name_lower.replace(' ', '_').replace('-', '_')
+        self.entity_id = f"device_tracker.om_device_{device_type_str}_{sanitized_name}"
+        self._attr_name = self._device_name  # Original case
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information."""
+        # Map device type to string for model name
+        type_map = {0: "Gateway", 1: "Switch", 2: "EAP"}
+        device_type_str = type_map.get(self._device_type, "Unknown")
+
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_unique_id)},
             name=self._device_name,
             manufacturer="TP-Link",
-            model="Omada Device",
+            model=f"Omada {device_type_str}",
             via_device=(DOMAIN, "omada_controller"),
         )
 
@@ -82,10 +99,23 @@ class OmadaClientTracker(CoordinatorEntity, TrackerEntity):
         super().__init__(coordinator)
         self._client_data = client_data
         self._client_mac = client_data.get("mac", "").replace(':', '').replace('-', '').lower()
+
+        # Keep original case for display name
         self._client_name = client_data.get("name", client_data.get("mac", "Unknown"))
+        # Lowercase version for entity_id
+        client_name_lower = self._client_name.lower()
+
+        # Determine if client is wireless (only for entity_id)
+        is_wireless = client_data.get("wireless", False)
+        client_type = "wireless" if is_wireless else "wired"
+
         self._device_unique_id = f"omada_client_{self._client_mac}"
         self._attr_unique_id = self._device_unique_id
-        self._attr_name = self._client_name
+
+        # Set new entity_id format using lowercase name
+        sanitized_name = client_name_lower.replace(' ', '_').replace('-', '_')
+        self.entity_id = f"device_tracker.om_client_{client_type}_{sanitized_name}"
+        self._attr_name = self._client_name  # Original case
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -94,7 +124,7 @@ class OmadaClientTracker(CoordinatorEntity, TrackerEntity):
             identifiers={(DOMAIN, self._device_unique_id)},
             name=self._client_name,
             manufacturer="TP-Link",
-            model="Omada Client",
+            model="Omada Client",  # Keep original model name
             via_device=(DOMAIN, "omada_controller"),
         )
 
@@ -136,7 +166,10 @@ class OmadaClientTracker(CoordinatorEntity, TrackerEntity):
 
 def create_device_trackers(coordinator, device):
     """Create device trackers for a device based on available data."""
-    return [OmadaDeviceTracker(coordinator, device, "device")]
+    device_type = device.get("deviceType", -1)
+    if device_type in [0, 1, 2]:  # Only create trackers for known device types
+        return [OmadaDeviceTracker(coordinator, device, device_type)]
+    return []
 
 def create_client_trackers(coordinator, client):
     """Create device trackers for a client based on available data."""
