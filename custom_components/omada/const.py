@@ -2,7 +2,7 @@
 from datetime import timedelta
 
 DOMAIN = "omada"
-DEFAULT_UPDATE_INTERVAL = timedelta(minutes=5)
+DEFAULT_UPDATE_INTERVAL = timedelta(seconds=30)
 
 CONF_SITE_NAME = "site_name"
 CONF_SKIP_CERT_VERIFY = "skip_cert_verify"
