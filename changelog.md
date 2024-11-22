@@ -2,7 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
-| 0.1.00013 | 21/11/2024 | changed entity_id |
+| 0.1.00013 | 21/11/2024 | changed entity_id to match device type, device name and sensor name |
 | 0.1.00012 | 19/11/2024 | fixing "Source Type" for URL Filtering |
 | 0.1.00011 | 19/11/2024 | added sensors "Policy", "Source" and "Source Type" to URL Filterings |
 | 0.1.00010 | 19/11/2024 | added translation type "SSID" to sensors "Source" and "Destination" |
