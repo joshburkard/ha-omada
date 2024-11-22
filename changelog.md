@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.1.00015 | 22/11/2024 | fixed lower-/upper-case of device names |
 | 0.1.00014 | 22/11/2024 | adjusted default interval to 30 seconds (was 5 minutes) |
 | 0.1.00013 | 21/11/2024 | changed entity_id to match device type, device name and sensor name |
 | 0.1.00012 | 19/11/2024 | fixing "Source Type" for URL Filtering |

@@ -773,15 +773,20 @@ class OmadaDeviceSensor(CoordinatorEntity, SensorEntity):
 
         # Clean up MAC address for ID
         self._device_mac = device_data.get("mac", "").replace(':', '').replace('-', '').lower()
-        self._device_name = device_data.get("name", device_data.get("mac", "Unknown")).lower()
+
+        # Keep original case for display name
+        self._device_name = device_data.get("name", device_data.get("mac", "Unknown"))
+        # Lowercase version for entity_id
+        device_name_lower = self._device_name.lower()
+
         self._device_unique_id = f"omada_device_{self._device_mac}"
         self._attr_unique_id = f"{self._device_unique_id}_{sensor_type}"
 
-        # Set entity ID with the new pattern
-        sanitized_name = self._device_name.replace(' ', '_').replace('-', '_')
+        # Set entity ID with lowercase name
+        sanitized_name = device_name_lower.replace(' ', '_').replace('-', '_')
         self.entity_id = f"sensor.om_device_{sanitized_name}_{sensor_type}"
 
-        # Set entity name
+        # Set entity name with original case
         self._attr_name = sensor_type.replace('_', ' ').title()
 
     @property
@@ -789,9 +794,9 @@ class OmadaDeviceSensor(CoordinatorEntity, SensorEntity):
         """Return device information."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_unique_id)},
-            name=self._device_name,
+            name=self._device_name,  # Original case preserved
             manufacturer="TP-Link",
-            model="Omada Device",  # Fixed model name for all devices
+            model="Omada Device",
             sw_version=self._device_data.get("firmwareVersion", "Unknown"),
             hw_version=self._device_data.get("hwVersion", "Unknown"),
             configuration_url=None,
