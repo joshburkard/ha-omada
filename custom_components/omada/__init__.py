@@ -1,4 +1,5 @@
 """The Omada Controller integration."""
+import asyncio
 import logging
 from datetime import timedelta
 import requests
@@ -423,17 +424,24 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
         self._entity_registry = er_async_get(self.hass)
         self._device_registry = dr.async_get(self.hass)
         self._pending_removals = set()
+        self._removal_lock = asyncio.Lock()
 
     async def trigger_removal(self, entity_id: str, device_id: str):
         """Trigger removal of an entity and its associated device."""
         if entity_id in self._pending_removals:
             return
 
-        self._pending_removals.add(entity_id)
+        async with self._removal_lock:
+            try:
+                self._pending_removals.add(entity_id)
+                _LOGGER.debug("Starting removal process for entity %s and device %s", entity_id, device_id)
 
-        try:
-            device = self._device_registry.async_get_device({(DOMAIN, device_id)})
-            if device:
+                # Get device by identifier
+                device = self._device_registry.async_get_device({(DOMAIN, device_id)})
+                if not device:
+                    _LOGGER.debug("Device %s not found in registry", device_id)
+                    return
+
                 # Get all entities for this device
                 device_entities = [
                     entry.entity_id
@@ -441,77 +449,78 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
                     if entry.device_id == device.id
                 ]
 
-                # Remove all entities for this device
+                # Remove entities first
                 for ent_id in device_entities:
-                    _LOGGER.debug("Removing entity %s for device %s", ent_id, device_id)
-                    self._entity_registry.async_remove(ent_id)
+                    try:
+                        _LOGGER.debug("Removing entity %s", ent_id)
+                        self._entity_registry.async_remove(ent_id)
+                    except Exception as entity_err:
+                        _LOGGER.warning("Error removing entity %s: %s", ent_id, str(entity_err))
 
-                # Remove the device itself
-                _LOGGER.debug("Removing device %s", device_id)
-                self._device_registry.async_remove_device(device.id)
+                # Then remove the device
+                try:
+                    _LOGGER.debug("Removing device %s", device.id)
+                    self._device_registry.async_remove_device(device.id)
+                except Exception as device_err:
+                    _LOGGER.warning("Error removing device %s: %s", device.id, str(device_err))
 
-        except Exception as err:
-            _LOGGER.error("Error removing device and entities: %s", str(err))
-        finally:
-            self._pending_removals.discard(entity_id)
+            except Exception as err:
+                _LOGGER.error("Error in removal process for entity %s: %s", entity_id, str(err))
+            finally:
+                self._pending_removals.discard(entity_id)
 
     async def _check_missing_entities(self, data):
         """Check and remove entities that no longer exist in the data."""
-        # Build sets of current valid device IDs
-        current_acl_devices = set()
-        current_url_filter_devices = set()
-        devices_to_remove = []
+        try:
+            # Build sets of current valid identifiers
+            current_devices = {
+                # ACL rules
+                f"omada_acl_{rule['name']}_{device_type}"
+                for device_type, rules in data["acl_rules"].items()
+                for rule in rules
+                if "name" in rule
+            } | {
+                # URL filters
+                f"omada_url_filter_{filter_rule['name']}_{filter_type}"
+                for filter_type, filters in data["url_filters"].items()
+                for filter_rule in filters
+                if "name" in filter_rule
+            } | {
+                # Omada devices
+                f"omada_device_{device['mac'].replace(':', '').replace('-', '').lower()}"
+                for device in data["devices"].get("data", [])
+                if "mac" in device
+            } | {
+                # Omada clients
+                f"omada_client_{client['mac'].replace(':', '').replace('-', '').lower()}"
+                for client in data["clients"].get("data", [])
+                if "mac" in client
+            }
 
-        # Add ACL rule devices
-        for device_type, rules in data["acl_rules"].items():
-            for rule in rules:
-                if "name" in rule:
-                    device_id = f"omada_acl_{rule['name']}_{device_type}"
-                    current_acl_devices.add(device_id)
+            # Get all devices with our domain
+            domain_devices = [
+                device for device in self._device_registry.devices.values()
+                if any(ident[0] == DOMAIN for ident in device.identifiers)
+            ]
 
-        # Add URL filter devices
-        for filter_type, filters in data["url_filters"].items():
-            for filter_rule in filters:
-                if "name" in filter_rule:
-                    device_id = f"omada_url_filter_{filter_rule['name']}_{filter_type}"
-                    current_url_filter_devices.add(device_id)
+            # Check each device
+            for device in domain_devices:
+                for domain, identifier in device.identifiers:
+                    if domain == DOMAIN and identifier not in current_devices:
+                        _LOGGER.debug("Device %s no longer exists in data, scheduling removal", identifier)
 
-        # Create list of devices to check
-        device_list = list(self._device_registry.devices.values())
-
-        # Check all devices and create removal list
-        for device in device_list:
-            for identifier in device.identifiers:
-                if identifier[0] == DOMAIN:
-                    device_id = identifier[1]
-
-                    # Check ACL devices
-                    if device_id.startswith("omada_acl_") and device_id not in current_acl_devices:
-                        _LOGGER.debug("ACL device %s no longer exists, marking for removal", device_id)
-                        # Get any entity from this device for removal
+                        # Get any entity from this device
                         device_entities = [
                             entry.entity_id
                             for entry in self._entity_registry.entities.values()
                             if entry.device_id == device.id
                         ]
-                        if device_entities:
-                            devices_to_remove.append((device_entities[0], device_id))
 
-                    # Check URL filter devices
-                    elif device_id.startswith("omada_url_filter_") and device_id not in current_url_filter_devices:
-                        _LOGGER.debug("URL filter device %s no longer exists, marking for removal", device_id)
-                        # Get any entity from this device for removal
-                        device_entities = [
-                            entry.entity_id
-                            for entry in self._entity_registry.entities.values()
-                            if entry.device_id == device.id
-                        ]
                         if device_entities:
-                            devices_to_remove.append((device_entities[0], device_id))
+                            await self.trigger_removal(device_entities[0], identifier)
 
-        # Process removals after iteration is complete
-        for entity_id, device_id in devices_to_remove:
-            await self.trigger_removal(entity_id, device_id)
+        except Exception as err:
+            _LOGGER.error("Error checking missing entities: %s", str(err))
 
     async def _async_update_data(self):
         """Fetch data from API."""
