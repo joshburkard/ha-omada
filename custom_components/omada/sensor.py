@@ -1,5 +1,7 @@
 """Sensor platform for Omada Controller."""
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
+from datetime import datetime
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.util import dt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
@@ -628,7 +630,7 @@ class OmadaACLSourceDestSensor(OmadaBaseSensor):
         if not self._device_data:
             return None
 
-        _LOGGER.info(
+        _LOGGER.debug(
             "Getting native value for %s with data: %s",
             self._attribute,
             self._device_data
@@ -773,15 +775,20 @@ class OmadaDeviceSensor(CoordinatorEntity, SensorEntity):
 
         # Clean up MAC address for ID
         self._device_mac = device_data.get("mac", "").replace(':', '').replace('-', '').lower()
-        self._device_name = device_data.get("name", device_data.get("mac", "Unknown")).lower()
+
+        # Keep original case for display name
+        self._device_name = device_data.get("name", device_data.get("mac", "Unknown"))
+        # Lowercase version for entity_id
+        device_name_lower = self._device_name.lower()
+
         self._device_unique_id = f"omada_device_{self._device_mac}"
         self._attr_unique_id = f"{self._device_unique_id}_{sensor_type}"
 
-        # Set entity ID with the new pattern
-        sanitized_name = self._device_name.replace(' ', '_').replace('-', '_')
+        # Set entity ID with lowercase name
+        sanitized_name = device_name_lower.replace(' ', '_').replace('-', '_')
         self.entity_id = f"sensor.om_device_{sanitized_name}_{sensor_type}"
 
-        # Set entity name
+        # Set entity name with original case
         self._attr_name = sensor_type.replace('_', ' ').title()
 
     @property
@@ -789,9 +796,9 @@ class OmadaDeviceSensor(CoordinatorEntity, SensorEntity):
         """Return device information."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_unique_id)},
-            name=self._device_name,
+            name=self._device_name,  # Original case preserved
             manufacturer="TP-Link",
-            model="Omada Device",  # Fixed model name for all devices
+            model="Omada Device",
             sw_version=self._device_data.get("firmwareVersion", "Unknown"),
             hw_version=self._device_data.get("hwVersion", "Unknown"),
             configuration_url=None,
@@ -822,31 +829,112 @@ class OmadaDeviceBasicSensor(OmadaDeviceSensor):
         super().__init__(coordinator, device_data, sensor_type)
         self._attribute = attribute
 
+        # Add units for specific sensors
+        if attribute in ["cpuUtil", "memUtil"]:
+            self._attr_native_unit_of_measurement = "%"
+
     @property
     def native_value(self):
         """Return the state of the sensor."""
         return self._device_data.get(self._attribute)
 
-class OmadaDeviceUptimeSensor(OmadaDeviceSensor):
-    """Sensor for device uptime."""
+class OmadaDeviceTrafficSensor(OmadaDeviceSensor):
+    """Sensor for device traffic."""
 
-    def __init__(self, coordinator, device_data):
+    def __init__(self, coordinator, device_data, sensor_type, attribute):
         """Initialize the sensor."""
-        super().__init__(coordinator, device_data, "uptime")
-        self._attr_device_class = SensorDeviceClass.DURATION
-        self._attr_native_unit_of_measurement = UnitOfTime.SECONDS
+        super().__init__(coordinator, device_data, sensor_type)
+        self._attribute = attribute
+        self._attr_native_unit_of_measurement = "MB"
 
     @property
     def native_value(self):
         """Return the state of the sensor."""
-        return self._device_data.get("uptimeLong")
+        value = self._device_data.get(self._attribute)
+        if value is not None:
+            # Convert bytes to megabytes
+            return round(value / (1024 * 1024), 2)
+        return value
+
+class OmadaDeviceUptimeSensor(OmadaDeviceSensor):
+    """Sensor for device uptime."""
+
+    def __init__(self, coordinator, device_data, sensor_type, attribute):
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_data, sensor_type)
+        self._attribute = attribute
+        self._attr_device_class = SensorDeviceClass.DURATION
+        self._attr_native_unit_of_measurement = UnitOfTime.SECONDS
+
+    def _parse_uptime_string(self, uptime_str):
+        """Parse uptime string into seconds."""
+        if not uptime_str:
+            return None
+
+        total_seconds = 0
+        try:
+            # Handle "37day(s) 1h 42m 54s" format
+            parts = uptime_str.replace("day(s)", "d").split()
+            for part in parts:
+                if 'd' in part:
+                    total_seconds += int(part.replace('d', '')) * 86400
+                elif 'h' in part:
+                    total_seconds += int(part.replace('h', '')) * 3600
+                elif 'm' in part:
+                    total_seconds += int(part.replace('m', '')) * 60
+                elif 's' in part:
+                    total_seconds += int(part.replace('s', ''))
+            return total_seconds
+        except (ValueError, TypeError, AttributeError) as e:
+            _LOGGER.error("Error parsing uptime string %s: %s", uptime_str, str(e))
+            return None
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        value = self._device_data.get(self._attribute)
+
+        # If it's uptimeLong, it's already in seconds
+        if self._attribute == "uptimeLong":
+            return value
+
+        # If it's uptime, it's a string we need to parse
+        if self._attribute == "uptime":
+            return self._parse_uptime_string(value)
+
+        return None
 
     @property
     def extra_state_attributes(self):
-        """Return additional state attributes."""
-        return {
-            "uptime_string": self._device_data.get("uptime")
-        }
+        """Return the state attributes."""
+        if self._attribute == "uptimeLong":
+            # Add the human-readable uptime as an attribute
+            uptime_str = self._device_data.get("uptime")
+            if uptime_str:
+                return {"uptime_string": uptime_str}
+        return None
+
+class OmadaDeviceDateTimeSensor(OmadaDeviceSensor):
+    """DateTime sensor for Omada device."""
+
+    def __init__(self, coordinator, device_data, sensor_type, attribute):
+        """Initialize the sensor."""
+        super().__init__(coordinator, device_data, sensor_type)
+        self._attribute = attribute
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        timestamp = self._device_data.get(self._attribute)
+        if timestamp:
+            try:
+                # Convert milliseconds to seconds and create UTC datetime
+                return dt.utc_from_timestamp(int(timestamp) / 1000)
+            except (ValueError, TypeError) as e:
+                _LOGGER.error("Error converting timestamp %s: %s", timestamp, str(e))
+                _LOGGER.debug("Device data: %s", self._device_data)
+        return None
 
 class OmadaClientSensor(CoordinatorEntity, SensorEntity):
     """Base sensor for Omada client information."""
@@ -1224,7 +1312,6 @@ def create_client_sensors(coordinator, client):
 
     # Map of sensor definitions: (sensor_class, name, attribute)
     sensor_definitions = [
-        (OmadaClientBasicSensor, "name", "name"),
         (OmadaClientBasicSensor, "gateway_name", "gatewayName"),
         (OmadaClientBasicSensor, "ip_address", "ip"),
         (OmadaClientBasicSensor, "mac_address", "mac"),
@@ -1262,24 +1349,54 @@ def create_client_sensors(coordinator, client):
             sensors.append(sensor_class(coordinator, client, name, attribute))
     return sensors
 
+# Update in sensor.py - modify create_device_sensors function:
+
 def create_device_sensors(coordinator, device):
     """Create sensors for a device based on available data."""
     sensors = []
+
+    # Map of sensor definitions: (sensor_class, name, attribute, display_name)
     sensor_definitions = [
-        (OmadaDeviceBasicSensor, "name", "name"),
-        (OmadaDeviceBasicSensor, "ip_address", "ip"),
-        (OmadaDeviceBasicSensor, "mac_address", "mac"),
-        (OmadaDeviceUptimeSensor, "uptime", None),
-        # Add more device sensors as needed
+        (OmadaDeviceBasicSensor, "model", "model", "Model"),
+        (OmadaDeviceBasicSensor, "compound_model", "compoundModel", "Compound Model"),
+        (OmadaDeviceBasicSensor, "show_model", "showModel", "Show Model"),
+        (OmadaDeviceBasicSensor, "model_version", "modelVersion", "Model Version"),
+        (OmadaDeviceBasicSensor, "firmware_version", "firmwareVersion", "Firmware Version"),
+        (OmadaDeviceBasicSensor, "version", "version", "Version"),
+        (OmadaDeviceBasicSensor, "hw_version", "hwVersion", "Hardware Version"),
+        (OmadaDeviceBasicSensor, "ip", "ip", "IP Address"),
+        (OmadaDeviceBasicSensor, "public_ip", "publicIp", "Public IP"),
+        (OmadaDeviceUptimeSensor, "uptime", "uptimeLong", "Uptime"),
+        (OmadaDeviceBasicSensor, "uptime_string", "uptime", "Uptime String"),
+        (OmadaDeviceBasicSensor, "status", "status", "Status"),
+        (OmadaDeviceBasicSensor, "adopt_fail_type", "adoptFailType", "Adopt Fail Type"),
+        (OmadaDeviceDateTimeSensor, "last_seen", "lastSeen", "Last Seen"),
+        (OmadaDeviceBasicSensor, "cpu_util", "cpuUtil", "CPU Utilization"),
+        (OmadaDeviceBasicSensor, "mem_util", "memUtil", "Memory Utilization"),
+        (OmadaDeviceTrafficSensor, "download", "download", "Download"),
+        (OmadaDeviceTrafficSensor, "upload", "upload", "Upload"),
+        (OmadaDeviceBasicSensor, "site", "site", "Site"),
+        (OmadaDeviceBasicSensor, "client_num", "clientNum", "Client Number"),
+        (OmadaDeviceBasicSensor, "serial_number", "sn", "Serial Number"),
+        (OmadaDeviceBasicSensor, "health_score", "healthScore", "Health Score"),
+        (OmadaDeviceBasicSensor, "category", "category", "Category"),
+        (OmadaDeviceBasicSensor, "config_sync_status", "configSyncStatus", "Config Sync Status"),
+        (OmadaDeviceBasicSensor, "support_running_config", "supportRunningConfig", "Support Running Config"),
+        (OmadaDeviceBasicSensor, "license_status", "licenseStatusStr", "License Status"),
     ]
-    for sensor_class, name, attribute in sensor_definitions:
+
+    for sensor_class, name, attribute, display_name in sensor_definitions:
+        # Skip if the attribute doesn't exist in device data
         if attribute is not None and attribute not in device:
             continue
-        if sensor_class == OmadaDeviceUptimeSensor:
-            if "uptime" in device:
-                sensors.append(sensor_class(coordinator, device))
-        else:
-            sensors.append(sensor_class(coordinator, device, name, attribute))
+
+        # Create sensor with all needed parameters
+        sensor = sensor_class(coordinator, device, name, attribute)
+
+        # Set display name
+        sensor._attr_name = display_name
+        sensors.append(sensor)
+
     return sensors
 
 def create_acl_rule_sensors(coordinator, rule, device_type):
@@ -1288,7 +1405,6 @@ def create_acl_rule_sensors(coordinator, rule, device_type):
 
     # Define available sensors and their corresponding attributes
     sensor_definitions = [
-        (OmadaACLRuleSensor, "name", "Name", "name"),
         (OmadaACLRuleSensor, "policy", "Policy", "policy"),
         (OmadaACLRuleSensor, "protocols", "Protocols", "protocols"),
         (OmadaACLRuleSensor, "src_ip", "Source IP", "srcIp"),
@@ -1326,8 +1442,7 @@ def create_url_filter_sensors(coordinator, filter_rule, filter_type):
 
     # Define available sensors and their corresponding attributes
     sensor_definitions = [
-        (OmadaURLFilterSensor, "name", "Name", "name"),        # name, display_name, attribute
-        (OmadaURLFilterSensor, "status", "Status", "status"),
+        (OmadaURLFilterSensor, "status", "Status", "status"),        # name, display_name, attribute
         (OmadaURLFilterSensor, "policy", "Policy", "mode"),    # Will show as "Policy" but use mode attribute
         (OmadaURLFilterSensor, "description", "Description", "description"),
         (OmadaURLFilterSensor, "sourceType", "Source Type", "sourceType"),

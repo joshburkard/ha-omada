@@ -99,23 +99,20 @@ class OmadaClientTracker(CoordinatorEntity, TrackerEntity):
         super().__init__(coordinator)
         self._client_data = client_data
         self._client_mac = client_data.get("mac", "").replace(':', '').replace('-', '').lower()
-
-        # Keep original case for display name
         self._client_name = client_data.get("name", client_data.get("mac", "Unknown"))
-        # Lowercase version for entity_id
-        client_name_lower = self._client_name.lower()
 
-        # Determine if client is wireless (only for entity_id)
+        # Match the same device_unique_id format as sensors
+        self._device_unique_id = f"omada_client_{self._client_mac}"
+        self._attr_unique_id = f"{self._device_unique_id}_tracker"
+
+        # Determine if client is wireless
         is_wireless = client_data.get("wireless", False)
         client_type = "wireless" if is_wireless else "wired"
 
-        self._device_unique_id = f"omada_client_{self._client_mac}"
-        self._attr_unique_id = self._device_unique_id
-
-        # Set new entity_id format using lowercase name
-        sanitized_name = client_name_lower.replace(' ', '_').replace('-', '_')
+        # Set entity_id format
+        sanitized_name = self._client_name.lower().replace(' ', '_').replace('-', '_')
         self.entity_id = f"device_tracker.om_client_{client_type}_{sanitized_name}"
-        self._attr_name = self._client_name  # Original case
+        self._attr_name = self._client_name
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -124,7 +121,7 @@ class OmadaClientTracker(CoordinatorEntity, TrackerEntity):
             identifiers={(DOMAIN, self._device_unique_id)},
             name=self._client_name,
             manufacturer="TP-Link",
-            model="Omada Client",  # Keep original model name
+            model="Omada Client",
             via_device=(DOMAIN, "omada_controller"),
         )
 
