@@ -17,3 +17,14 @@ DEVICE_TYPE_NAMES = {
     DEVICE_TYPE_SWITCH: "Switch",
     DEVICE_TYPE_EAP: "EAP"
 }
+
+# Label colors
+LABEL_COLORS = {
+    "URL_FILTER_GATEWAY": "#4CAF50",  # Green
+    "URL_FILTER_EAP": "#8BC34A",      # Light Green
+    "DEVICE": "#FF9800",              # Orange
+    "CLIENT": "#2196F3",              # Blue
+    "ACL_RULE_GATEWAY": "#F44336",    # Red
+    "ACL_RULE_SWITCH": "#E91E63",     # Pink
+    "ACL_RULE_EAP": "#9C27B0"         # Purple
+}

@@ -23,8 +23,11 @@ from homeassistant.helpers.entity_registry import (
     async_entries_for_config_entry
 )
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import label_registry as lr
 
-from .const import DOMAIN, CONF_SITE_NAME, CONF_SKIP_CERT_VERIFY, DEFAULT_UPDATE_INTERVAL
+from .const import DOMAIN, CONF_SITE_NAME, CONF_SKIP_CERT_VERIFY, DEFAULT_UPDATE_INTERVAL, LABEL_COLORS
+
+from homeassistant.util import slugify
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH, Platform.DEVICE_TRACKER]
@@ -423,8 +426,37 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
         self.api = api
         self._entity_registry = er_async_get(self.hass)
         self._device_registry = dr.async_get(self.hass)
+        self._label_registry = lr.async_get(self.hass)
         self._pending_removals = set()
         self._removal_lock = asyncio.Lock()
+
+    async def remove_orphaned_devices(self):
+        """Remove devices that have no associated entities."""
+        async with self._removal_lock:
+            try:
+                # Get all devices with our domain
+                domain_devices = [
+                    device for device in self._device_registry.devices.values()
+                    if any(ident[0] == DOMAIN for ident in device.identifiers)
+                ]
+
+                for device in domain_devices:
+                    # Get all entities for this device
+                    device_entities = [
+                        entry.entity_id
+                        for entry in self._entity_registry.entities.values()
+                        if entry.device_id == device.id
+                    ]
+
+                    if not device_entities:
+                        _LOGGER.debug("Found orphaned device %s with no entities, removing", device.id)
+                        try:
+                            self._device_registry.async_remove_device(device.id)
+                        except Exception as err:
+                            _LOGGER.warning("Error removing orphaned device %s: %s", device.id, str(err))
+
+            except Exception as err:
+                _LOGGER.error("Error cleaning up orphaned devices: %s", str(err))
 
     async def trigger_removal(self, entity_id: str, device_id: str):
         """Trigger removal of an entity and its associated device."""
@@ -472,52 +504,112 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
     async def _check_missing_entities(self, data):
         """Check and remove entities that no longer exist in the data."""
         try:
-            # Build sets of current valid identifiers
-            current_devices = {
-                # ACL rules
+            # Get relevant identifiers for rules and filters
+            current_rules_and_filters = {
                 f"omada_acl_{rule['name']}_{device_type}"
                 for device_type, rules in data["acl_rules"].items()
-                for rule in rules
-                if "name" in rule
+                for rule in rules if "name" in rule
             } | {
-                # URL filters
                 f"omada_url_filter_{filter_rule['name']}_{filter_type}"
                 for filter_type, filters in data["url_filters"].items()
-                for filter_rule in filters
-                if "name" in filter_rule
-            } | {
-                # Omada devices
-                f"omada_device_{device['mac'].replace(':', '').replace('-', '').lower()}"
-                for device in data["devices"].get("data", [])
-                if "mac" in device
-            } | {
-                # Omada clients
-                f"omada_client_{client['mac'].replace(':', '').replace('-', '').lower()}"
-                for client in data["clients"].get("data", [])
-                if "mac" in client
+                for filter_rule in filters if "name" in filter_rule
             }
 
+            # Get label registry and labels
+            label_registry = lr.async_get(self.hass)
+
             # Get all devices with our domain
-            domain_devices = [
-                device for device in self._device_registry.devices.values()
-                if any(ident[0] == DOMAIN for ident in device.identifiers)
-            ]
+            for device in self._device_registry.devices.values():
+                if not any(ident[0] == DOMAIN for ident in device.identifiers):
+                    continue
 
-            # Check each device
-            for device in domain_devices:
+                device_labels = set()
+                _LOGGER.debug("Checking device: %s with identifiers: %s", device.id, device.identifiers)
+
                 for domain, identifier in device.identifiers:
-                    if domain == DOMAIN and identifier not in current_devices:
-                        _LOGGER.debug("Device %s no longer exists in data, scheduling removal", identifier)
+                    if domain != DOMAIN:
+                        continue
 
-                        # Get any entity from this device
+                    _LOGGER.debug("Processing identifier: %s", identifier)
+
+                    # Get labels inside the loop to ensure they exist
+                    gateway_urlfilter_label = label_registry.async_get_label(slugify("Omada Gateway URL Filter"))
+                    eap_urlfilter_label = label_registry.async_get_label(slugify("Omada EAP URL Filter"))
+                    device_label = label_registry.async_get_label(slugify("Omada Device"))
+                    client_label = label_registry.async_get_label(slugify("Omada Client"))
+                    gateway_acl_label = label_registry.async_get_label(slugify("Omada Gateway ACL Rule"))
+                    switch_acl_label = label_registry.async_get_label(slugify("Omada Switch ACL Rule"))
+                    eap_acl_label = label_registry.async_get_label(slugify("Omada EAP ACL Rule"))
+
+                    if identifier.startswith("omada_device_"):
+                        device_labels.add(device_label.label_id)
+                        _LOGGER.debug("Added device label %s to %s", device_label.label_id, identifier)
+                    elif identifier.startswith("omada_client_"):
+                        device_labels.add(client_label.label_id)
+                        _LOGGER.debug("Added client label %s to %s", client_label.label_id, identifier)
+                    elif identifier.startswith("omada_url_filter_gateway_"):
+                        device_labels.add(gateway_urlfilter_label.label_id)
+                        _LOGGER.debug("Added gateway URL filter label %s to %s", gateway_urlfilter_label.label_id, identifier)
+                    elif identifier.startswith("omada_url_filter_ap_"):
+                        device_labels.add(eap_urlfilter_label.label_id)
+                        _LOGGER.debug("Added EAP URL filter label %s to %s", eap_urlfilter_label.label_id, identifier)
+                    elif identifier.startswith("omada_acl_gateway_"):
+                        device_labels.add(gateway_acl_label.label_id)
+                        _LOGGER.debug("Added gateway ACL label %s to %s", gateway_acl_label.label_id, identifier)
+                    elif identifier.startswith("omada_acl_switch_"):
+                        device_labels.add(switch_acl_label.label_id)
+                        _LOGGER.debug("Added switch ACL label %s to %s", switch_acl_label.label_id, identifier)
+                    elif identifier.startswith("omada_acl_eap_"):
+                        device_labels.add(eap_acl_label.label_id)
+                        _LOGGER.debug("Added EAP ACL label %s to %s", eap_acl_label.label_id, identifier)
+                    else:
+                        _LOGGER.error("Unmatched identifier pattern: %s", identifier)
+
+                    # Handle device and client availability
+                    if identifier.startswith(("omada_device_", "omada_client_")):
+                        is_online = False
+                        if identifier.startswith("omada_device_"):
+                            is_online = any(
+                                identifier == f"omada_device_{dev['mac'].replace(':', '').replace('-', '').lower()}"
+                                for dev in data["devices"].get("data", [])
+                                if "mac" in dev
+                            )
+                        elif identifier.startswith("omada_client_"):
+                            is_online = any(
+                                identifier == f"omada_client_{client['mac'].replace(':', '').replace('-', '').lower()}"
+                                for client in data["clients"].get("data", [])
+                                if "mac" in client
+                            )
+
+                        # Update availability but preserve device
                         device_entities = [
                             entry.entity_id
                             for entry in self._entity_registry.entities.values()
                             if entry.device_id == device.id
                         ]
 
-                        if device_entities:
-                            await self.trigger_removal(device_entities[0], identifier)
+                        for entity_id in device_entities:
+                            entity = self.hass.states.get(entity_id)
+                            if entity is not None:
+                                try:
+                                    if not is_online:
+                                        self.hass.states.async_set(
+                                            entity_id,
+                                            entity.state,
+                                            entity.attributes | {"available": False}
+                                        )
+                                except Exception as err:
+                                    _LOGGER.warning("Error updating entity %s availability: %s", entity_id, str(err))
+
+                # Update device with labels
+                if device_labels:
+                    try:
+                        self._device_registry.async_update_device(
+                            device.id,
+                            labels=device_labels
+                        )
+                    except Exception as err:
+                        _LOGGER.warning("Error updating device labels for %s: %s", device.id, str(err))
 
         except Exception as err:
             _LOGGER.error("Error checking missing entities: %s", str(err))
@@ -601,6 +693,9 @@ class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
             # Check for missing entities before returning data
             await self._check_missing_entities(data)
 
+            # Clean up orphaned devices after each update
+            await self.remove_orphaned_devices()
+
             return data
 
         except Exception as err:
@@ -636,6 +731,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Fetch initial data
         await coordinator.async_config_entry_first_refresh()
+
+        # Create labels
+        label_registry = lr.async_get(hass)
+        label_mappings = {
+            "Omada Gateway URL Filter": LABEL_COLORS["URL_FILTER_GATEWAY"],
+            "Omada EAP URL Filter": LABEL_COLORS["URL_FILTER_EAP"],
+            "Omada Device": LABEL_COLORS["DEVICE"],
+            "Omada Client": LABEL_COLORS["CLIENT"],
+            "Omada Gateway ACL Rule": LABEL_COLORS["ACL_RULE_GATEWAY"],
+            "Omada Switch ACL Rule": LABEL_COLORS["ACL_RULE_SWITCH"],
+            "Omada EAP ACL Rule": LABEL_COLORS["ACL_RULE_EAP"]
+        }
+
+        for label_name, color in label_mappings.items():
+            try:
+                label = label_registry.async_create(label_name, color=color)
+                _LOGGER.debug("Created label %s with ID: %s", label_name, label.label_id)
+            except ValueError:
+                label = label_registry.async_get_label(slugify(label_name))
+                _LOGGER.debug("Found existing label %s with ID: %s", label_name, label.label_id if label else 'None')
+
+        # Start with empty set of labels
+        device_labels = set()
 
         # Store coordinator
         hass.data[DOMAIN][entry.entry_id] = {
