@@ -2,6 +2,8 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.1.00018 | 25/11/2024 | create and assign labels to devices |
+| 0.1.00017 | 25/11/2024 | fixed "Error removing device and entities:" |
 | 0.1.00016 | 22/11/2024 | added new sensors to Omada Devices |
 | 0.1.00015 | 22/11/2024 | fixed lower-/upper-case of device names |
 | 0.1.00014 | 22/11/2024 | adjusted default interval to 30 seconds (was 5 minutes) |
