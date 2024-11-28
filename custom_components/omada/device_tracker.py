@@ -1,202 +1,103 @@
-"""
-Device Tracker platform for Omada Controller.
-"""
+"""Device tracker for Test HA Omada."""
+from typing import Any
 
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+from homeassistant.components.device_tracker import SourceType, TrackerEntity
+from homeassistant.components.device_tracker.const import ATTR_SOURCE_TYPE, DOMAIN as TRACKER_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .helpers import OmadaCoordinatorEntity
 from .const import DOMAIN
-import logging
-
-_LOGGER = logging.getLogger(__name__)
-
-class OmadaDeviceTracker(CoordinatorEntity, TrackerEntity):
-    """Base class for Omada device tracker."""
-
-    def __init__(self, coordinator, device_data, device_type):
-        """Initialize the device tracker."""
-        super().__init__(coordinator)
-        self._device_data = device_data
-        self._device_type = device_type
-        self._device_mac = device_data.get("mac", "").replace(':', '').replace('-', '').lower()
-
-        # Keep original case for display name
-        self._device_name = device_data.get("name", device_data.get("mac", "Unknown"))
-        # Lowercase version for entity_id
-        device_name_lower = self._device_name.lower()
-
-        # Map device type to string
-        type_map = {0: "gateway", 1: "switch", 2: "eap"}
-        device_type_str = type_map.get(device_type, "unknown")
-
-        self._device_unique_id = f"omada_device_{device_type_str}_{self._device_mac}"
-        self._attr_unique_id = self._device_unique_id
-
-        # Set new entity_id format using lowercase name
-        sanitized_name = device_name_lower.replace(' ', '_').replace('-', '_')
-        self.entity_id = f"device_tracker.om_device_{device_type_str}_{sanitized_name}"
-        self._attr_name = self._device_name  # Original case
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        # Map device type to string for model name
-        type_map = {0: "Gateway", 1: "Switch", 2: "EAP"}
-        device_type_str = type_map.get(self._device_type, "Unknown")
-
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_unique_id)},
-            name=self._device_name,
-            manufacturer="TP-Link",
-            model=f"Omada {device_type_str}",
-            via_device=(DOMAIN, "omada_controller"),
-        )
-
-    @property
-    def state(self):
-        """Return the state of the device."""
-        connected = self._device_data is not None
-        _LOGGER.debug("Device %s is_connected: %s", self._device_name, connected)
-        return "home" if connected else "not_home"
-
-    @property
-    def source_type(self):
-        """Return the source type of the device."""
-        return "router"
-
-    @property
-    def should_poll(self):
-        """No polling needed for this entity."""
-        return False
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        _LOGGER.debug("Updating device tracker for %s", self._device_name)
-        if updated_data := self._get_updated_data():
-            self._device_data = updated_data
-        else:
-            self._device_data = None
-        self.async_write_ha_state()
-
-    def _get_updated_data(self):
-        """Get the latest device data."""
-        if not self.coordinator.data.get("devices", {}).get("data"):
-            return None
-        for device in self.coordinator.data["devices"]["data"]:
-            if device.get("mac", "").replace(':', '').replace('-', '').lower() == self._device_mac:
-                return device
-        return None
-
-class OmadaClientTracker(CoordinatorEntity, TrackerEntity):
-    """Base class for Omada client tracker."""
-
-    def __init__(self, coordinator, client_data):
-        """Initialize the client tracker."""
-        super().__init__(coordinator)
-        self._client_data = client_data
-        self._client_mac = client_data.get("mac", "").replace(':', '').replace('-', '').lower()
-        self._client_name = client_data.get("name", client_data.get("mac", "Unknown"))
-
-        # Match the same device_unique_id format as sensors
-        self._device_unique_id = f"omada_client_{self._client_mac}"
-        self._attr_unique_id = f"{self._device_unique_id}_tracker"
-
-        # Determine if client is wireless
-        is_wireless = client_data.get("wireless", False)
-        client_type = "wireless" if is_wireless else "wired"
-
-        # Set entity_id format
-        sanitized_name = self._client_name.lower().replace(' ', '_').replace('-', '_')
-        self.entity_id = f"device_tracker.om_client_{client_type}_{sanitized_name}"
-        self._attr_name = self._client_name
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_unique_id)},
-            name=self._client_name,
-            manufacturer="TP-Link",
-            model="Omada Client",
-            via_device=(DOMAIN, "omada_controller"),
-        )
-
-    @property
-    def state(self):
-        """Return the state of the client."""
-        connected = self._client_data is not None
-        _LOGGER.debug("Client %s is_connected: %s", self._client_name, connected)
-        return "home" if connected else "not_home"
-
-    @property
-    def source_type(self):
-        """Return the source type of the client."""
-        return "router"
-
-    @property
-    def should_poll(self):
-        """No polling needed for this entity."""
-        return False
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        _LOGGER.debug("Updating client tracker for %s", self._client_name)
-        if updated_data := self._get_updated_data():
-            self._client_data = updated_data
-        else:
-            self._client_data = None
-        self.async_write_ha_state()
-
-    def _get_updated_data(self):
-        """Get the latest client data."""
-        if not self.coordinator.data.get("clients", {}).get("data"):
-            return None
-        for client in self.coordinator.data["clients"]["data"]:
-            if client.get("mac", "").replace(':', '').replace('-', '').lower() == self._client_mac:
-                return client
-        return None
-
-def create_device_trackers(coordinator, device):
-    """Create device trackers for a device based on available data."""
-    device_type = device.get("deviceType", -1)
-    if device_type in [0, 1, 2]:  # Only create trackers for known device types
-        return [OmadaDeviceTracker(coordinator, device, device_type)]
-    return []
-
-def create_client_trackers(coordinator, client):
-    """Create device trackers for a client based on available data."""
-    return [OmadaClientTracker(coordinator, client)]
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
-) -> bool:
-    """Set up device trackers from a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    entities = []
+) -> None:
+    """Set up device tracker for Omada Clients."""
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    tracked_clients = {}
 
     @callback
-    def update_entities():
-        """Update entities with new clients and devices."""
-        _LOGGER.debug("Updating entities with new clients and devices")
-        new_entities = []
+    def async_add_clients():
+        """Add new clients."""
+        new_clients = []
 
-        # Create device trackers for clients
-        for client in coordinator.data.get("clients", {}).get("data", []):
-            new_entities.extend(create_client_trackers(coordinator, client))
+        for client in coordinator.data["clients"]:
+            mac = client.get("mac")
+            if not mac or mac in tracked_clients:
+                continue
 
-        # Create device trackers for devices
-        for device in coordinator.data.get("devices", {}).get("data", []):
-            new_entities.extend(create_device_trackers(coordinator, device))
+            tracker = OmadaClientTracker(coordinator, client)
+            tracked_clients[mac] = tracker
+            new_clients.append(tracker)
 
-        async_add_entities(new_entities)
+        if new_clients:
+            async_add_entities(new_clients)
 
-    coordinator.async_add_listener(update_entities)
-    update_entities()
-    return True
+    coordinator.async_add_listener(async_add_clients)
+    async_add_clients()
+
+class OmadaClientTracker(OmadaCoordinatorEntity, TrackerEntity):
+    """Representation of a network device."""
+
+    def __init__(self, coordinator, client):
+        """Initialize the device."""
+        super().__init__(coordinator)
+        self._client = client
+        self._attr_unique_id = f"omada_tracker_{client['mac']}"
+        self._attr_name = client.get('name', client['mac'])
+        self._attr_entity_category = None
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"client_{client['mac']}")},
+            "name": self.name,
+            "manufacturer": client.get("manufacturer", "TP-Link"),
+            "model": "Omada Client",
+            "sw_version": client.get("os", "Unknown"),
+        }
+
+        self._last_ip = client.get("ip")
+        self._last_mac = client.get("mac")
+
+    @property
+    def source_type(self) -> SourceType:
+        """Return the source type."""
+        return SourceType.ROUTER
+
+    @property
+    def state(self) -> str:
+        """Return the state of the device."""
+        return "home" if self.is_connected else "not_home"
+
+    @property
+    def is_connected(self) -> bool:
+        """Return true if the client is connected."""
+        return self._is_client_in_data()
+
+    @property
+    def ip_address(self) -> str | None:
+        """Return the primary ip address."""
+        return self._last_ip
+
+    @property
+    def mac_address(self) -> str | None:
+        """Return the mac address."""
+        return self._last_mac
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the device state attributes."""
+        return {
+            ATTR_SOURCE_TYPE: self.source_type,
+            "ip": self._last_ip,
+            "mac": self._last_mac
+        }
+
+    def _is_client_in_data(self) -> bool:
+        """Check if the client is in current data."""
+        return any(
+            client["mac"] == self._client["mac"]
+            for client in self.coordinator.data["clients"]
+        )
