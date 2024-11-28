@@ -190,7 +190,7 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
             "identifiers": {(DOMAIN, f"acl_rule_{device_type}_{rule_id}")},
             "name": device_name,
             "manufacturer": "TP-Link",
-            "model": f"ACL {device_type.capitalize()} Rule",
+            "model": f"Omada ACL {device_type.capitalize()} Rule",
         }
 
     def _get_source_dest_value(self, ids, type_value):
@@ -330,7 +330,7 @@ class OmadaClientBaseSensor(CoordinatorEntity, SensorEntity):
             "identifiers": {(DOMAIN, f"client_{client['mac']}")},
             "name": client_name,
             "manufacturer": client.get("manufacturer", "TP-Link"),
-            "model": client.get("model", "Client Device"),
+            "model": client.get("model", "Omada Client"),
             "sw_version": client.get("os", "Unknown"),
         }
 
@@ -523,7 +523,7 @@ class OmadaDeviceBasicSensor(CoordinatorEntity, SensorEntity):
             "identifiers": {(DOMAIN, f"device_{device['mac']}")},
             "name": device_name,
             "manufacturer": "TP-Link",
-            "model": device.get("model", "Unknown"),
+            "model": device.get("model", "Omada Device"),
             "sw_version": device.get("firmwareVersion", "Unknown"),
         }
 

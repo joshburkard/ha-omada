@@ -91,7 +91,7 @@ class OmadaDeviceBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "identifiers": {(DOMAIN, f"device_{device_mac}")},
             "name": device_name,
             "manufacturer": "TP-Link",
-            "model": str(device.get("model", "Unknown")),
+            "model": str(device.get("model", "Omada Device")),
             "sw_version": str(device.get("firmwareVersion", "Unknown")),
         }
 

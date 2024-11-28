@@ -53,8 +53,8 @@ class OmadaClientTracker(OmadaCoordinatorEntity, TrackerEntity):
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"client_{client['mac']}")},
             "name": self.name,
-            "manufacturer": client.get("manufacturer", "Unknown"),
-            "model": "Client Device",
+            "manufacturer": client.get("manufacturer", "TP-Link"),
+            "model": "Omada Client",
             "sw_version": client.get("os", "Unknown"),
         }
 

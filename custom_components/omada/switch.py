@@ -71,7 +71,7 @@ class OmadaACLRuleSwitch(OmadaCoordinatorEntity, SwitchEntity):
             "identifiers": {(DOMAIN, f"acl_rule_{device_type}_{self._rule_id}")},
             "name": device_name,
             "manufacturer": "TP-Link",
-            "model": f"ACL {device_type.capitalize()} Rule",
+            "model": f"Omada ACL {device_type.capitalize()} Rule",
         }
 
     @property
