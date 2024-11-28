@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.2.00019 | 28/11/2024 | completly restructured, only Devices, Clients and ACL Rules are available at the moment, no URL Filters and no labels |
 | 0.1.00018 | 25/11/2024 | create and assign labels to devices |
 | 0.1.00017 | 25/11/2024 | fixed "Error removing device and entities:" |
 | 0.1.00016 | 22/11/2024 | added new sensors to Omada Devices |

@@ -1,123 +1,135 @@
-﻿# binary_sensor.py:
-
-"""Binary sensor platform for Omada Controller."""
-from homeassistant.components.binary_sensor import BinarySensorEntity
+﻿"""Binary sensor platform for Test HA Omada."""
+import logging
+from homeassistant.components.binary_sensor import (
+    BinarySensorEntity,
+    BinarySensorDeviceClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-
+from homeassistant.util import slugify
 from .const import DOMAIN
-
-import logging
+from .helpers import OmadaCoordinatorEntity, is_valid_value
 
 _LOGGER = logging.getLogger(__name__)
 
-class OmadaDeviceBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Binary sensor for Omada device information."""
-
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator, device_data, sensor_type, attribute, display_name):
-        """Initialize the binary sensor."""
-        super().__init__(coordinator)
-        self._device_data = device_data
-        self._sensor_type = sensor_type
-        self._attribute = attribute
-        self.entity_category = EntityCategory.DIAGNOSTIC
-
-        # Clean up MAC address for ID
-        self._device_mac = device_data.get("mac", "").replace(':', '').replace('-', '').lower()
-
-        # Keep original case for display name
-        self._device_name = device_data.get("name", device_data.get("mac", "Unknown"))
-        # Lowercase version for entity_id
-        device_name_lower = self._device_name.lower()
-
-        self._device_unique_id = f"omada_device_{self._device_mac}"
-        self._attr_unique_id = f"{self._device_unique_id}_{sensor_type}"
-
-        # Set entity ID with lowercase name
-        sanitized_name = device_name_lower.replace(' ', '_').replace('-', '_')
-        self.entity_id = f"binary_sensor.om_device_{sanitized_name}_{sensor_type}"
-
-        # Set display name
-        self._attr_name = display_name
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device information."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_unique_id)},
-            name=self._device_name,
-            manufacturer="TP-Link",
-            model="Omada Device",
-            sw_version=self._device_data.get("firmwareVersion", "Unknown"),
-            hw_version=self._device_data.get("hwVersion", "Unknown"),
-        )
-
-    @property
-    def is_on(self) -> bool:
-        """Return the state of the binary sensor."""
-        value = self._device_data.get(self._attribute)
-        if value is None:
-            return None
-        return bool(value)
-
-    @property
-    def available(self) -> bool:
-        """Return True if entity is available."""
-        return self._device_data is not None
-
-def create_device_binary_sensors(coordinator, device):
-    """Create binary sensors for a device based on available data."""
-    sensors = []
-
-    # Map of binary sensor definitions: (sensor_type, attribute, display_name)
-    sensor_definitions = [
-        ("combined_gateway", "combinedGateway", "Combined Gateway"),
-        ("compatible", "compatible", "Compatible"),
-        ("es", "es", "ES"),
-        ("fw_download", "fwDownload", "Firmware Download"),
-        ("locate_enable", "locateEnable", "Locate Enable"),
-        ("need_upgrade", "needUpgrade", "Need Upgrade"),
-        ("status_category", "statusCategory", "Status Category"),
-    ]
-
-    for sensor_type, attribute, display_name in sensor_definitions:
-        if attribute in device:
-            sensors.append(OmadaDeviceBinarySensor(
-                coordinator,
-                device,
-                sensor_type,
-                attribute,
-                display_name
-            ))
-
-    return sensors
+# Device sensor definitions tuple (entity_id, attribute, display_name)
+DEVICE_SENSOR_DEFINITIONS = [
+    ("combined_gateway", "combinedGateway", "Combined Gateway"),
+    ("compatible", "compatible", "Compatible"),
+    ("es", "es", "ES"),
+    ("fw_download", "fwDownload", "Firmware Download"),
+    ("locate_enable", "locateEnable", "Locate Enable"),
+    ("need_upgrade", "needUpgrade", "Need Upgrade"),
+    ("status_category", "statusCategory", "Status Category"),
+]
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
-) -> bool:
-    """Set up binary sensors from a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+) -> None:
+    """Set up the binary sensors."""
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    tracked_entities = {}
 
     @callback
-    def async_update_binary_sensors():
-        """Update binary sensors."""
-        new_sensors = []
+    def add_entities():
+        """Add new entities."""
+        new_entities = []
 
-        # Create binary sensors for devices
-        for device in coordinator.data.get("devices", {}).get("data", []):
-            new_sensors.extend(create_device_binary_sensors(coordinator, device))
+        # Add device binary sensors
+        if "devices" in coordinator.data:
+            for device in coordinator.data["devices"]:
+                device_mac = device.get("mac")
+                if not device_mac:
+                    continue
 
-        if new_sensors:
-            async_add_entities(new_sensors)
+                for entity_id, attribute, display_name in DEVICE_SENSOR_DEFINITIONS:
+                    entity_key = f"device_{device_mac}_{entity_id}"
+                    if entity_key in tracked_entities:
+                        continue
 
-    coordinator.async_add_listener(async_update_binary_sensors)
-    async_update_binary_sensors()
+                    if not is_valid_value(device.get(attribute)):
+                        continue
 
-    return True
+                    entity = OmadaDeviceBinarySensor(
+                        coordinator,
+                        device,
+                        entity_id,
+                        attribute,
+                        display_name
+                    )
+                    tracked_entities[entity_key] = entity
+                    new_entities.append(entity)
+
+        if new_entities:
+            async_add_entities(new_entities)
+
+    coordinator.async_add_listener(add_entities)
+    add_entities()
+
+class OmadaDeviceBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor for Omada device attributes."""
+
+    def __init__(self, coordinator, device, entity_id, attribute, display_name):
+        """Initialize the binary sensor."""
+        super().__init__(coordinator)
+        self._device = device
+        self._attribute = attribute
+        self._display_name = display_name
+        # Get device MAC and name with fallback values
+        device_mac = str(device.get("mac", "unknown"))
+        device_name = str(device.get("name", device_mac))
+        # Set unique_id as combination of MAC and sensor type
+        self._attr_unique_id = f"device_{device_mac}_{entity_id}"
+        # Set name as combination of device name and sensor display name
+        self._attr_name = f"{device_name} {display_name}"
+        # Set up device info
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"device_{device_mac}")},
+            "name": device_name,
+            "manufacturer": "TP-Link",
+            "model": str(device.get("model", "Unknown")),
+            "sw_version": str(device.get("firmwareVersion", "Unknown")),
+        }
+
+    @property
+    def is_on(self) -> bool:
+        """Return sensor state."""
+        if not isinstance(self.coordinator.data, dict) or "devices" not in self.coordinator.data:
+            return False
+        for device in self.coordinator.data["devices"]:
+            if not isinstance(device, dict):
+                continue
+            if device.get("mac") == self._device.get("mac"):
+                # Handle different types of boolean values
+                value = device.get(self._attribute)
+                if isinstance(value, bool):
+                    return value
+                elif isinstance(value, str):
+                    return value.lower() in ['true', '1', 'yes', 'on']
+                elif isinstance(value, (int, float)):
+                    return bool(value)
+        return False
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        if not isinstance(self.coordinator.data, dict) or "devices" not in self.coordinator.data:
+            return False
+        device_found = any(
+            isinstance(device, dict) and device.get("mac") == self._device.get("mac")
+            for device in self.coordinator.data["devices"]
+        )
+        return self.coordinator.last_update_success and device_found
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return additional attributes about the sensor."""
+        return {
+            "attribute_name": self._attribute,
+            "mac_address": str(self._device.get("mac", "unknown")),
+            "entity_type": "device"
+        }
