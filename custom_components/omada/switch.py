@@ -29,6 +29,7 @@ async def async_setup_entry(
         new_switches = []
         current_rules = set()
 
+        # Add ACL Rule switches
         for device_type in ["gateway", "switch", "eap"]:
             if device_type not in coordinator.data["acl_rules"]:
                 continue
@@ -45,6 +46,24 @@ async def async_setup_entry(
                     rule_name = rule.get("name", rule_id)
                     device_name = f"Omada ACL {device_type.capitalize()} Rule - {rule_name}"
                     switch = OmadaACLRuleSwitch(coordinator, api, rule, device_type, device_name)
+                    switches[identifier] = switch
+                    new_switches.append(switch)
+
+        # Add URL Filter switches
+        for filter_type in ["gateway", "ap"]:
+            if filter_type not in coordinator.data["url_filters"]:
+                continue
+
+            for rule in coordinator.data["url_filters"][filter_type]:
+                rule_id = rule.get("id")
+                if not rule_id:
+                    continue
+
+                identifier = f"{filter_type}_url_{rule_id}"
+                if identifier not in switches:
+                    rule_name = rule.get("name", rule_id)
+                    device_name = f"Omada {'Gateway' if filter_type == 'gateway' else 'EAP'} URL Filter - {rule_name}"
+                    switch = OmadaURLFilterSwitch(coordinator, api, rule, filter_type, device_name)
                     switches[identifier] = switch
                     new_switches.append(switch)
 
@@ -71,7 +90,7 @@ class OmadaACLRuleSwitch(OmadaCoordinatorEntity, SwitchEntity):
             "identifiers": {(DOMAIN, f"acl_rule_{device_type}_{self._rule_id}")},
             "name": device_name,
             "manufacturer": "TP-Link",
-            "model": f"Omada ACL {device_type.capitalize()} Rule",
+            "model": f"Omada {device_type.capitalize()} ACL Rule",
         }
 
     @property
@@ -116,4 +135,72 @@ class OmadaACLRuleSwitch(OmadaCoordinatorEntity, SwitchEntity):
 
         except Exception as error:
             _LOGGER.error("Failed to update ACL rule status: %s", error)
+            raise
+
+class OmadaURLFilterSwitch(OmadaCoordinatorEntity, SwitchEntity):
+    """Switch for URL filter status."""
+
+    def __init__(self, coordinator, api, rule, filter_type, device_name):
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._api = api
+        self._rule = rule
+        self._filter_type = filter_type
+        self._rule_id = rule.get("id")
+        self._attr_name = f"{device_name} Status"
+        self._attr_unique_id = f"url_filter_{filter_type}_{self._rule_id}_status"
+
+        model_name = f"Omada {'Gateway' if filter_type == 'gateway' else 'EAP'} URL Filter"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"url_filter_{filter_type}_{self._rule_id}")},
+            "name": device_name,
+            "manufacturer": "TP-Link",
+            "model": model_name,
+        }
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the switch is on."""
+        rules = self.coordinator.data["url_filters"].get(self._filter_type, [])
+        return any(rule.get("id") == self._rule_id and rule.get("status", False)
+                  for rule in rules)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn on the switch."""
+        await self._update_filter_status(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn off the switch."""
+        await self._update_filter_status(False)
+
+    async def _update_filter_status(self, status: bool) -> None:
+        """Update the URL filter status."""
+        try:
+            current_rule = None
+            for rule in self.coordinator.data["url_filters"].get(self._filter_type, []):
+                if rule.get("id") == self._rule_id:
+                    current_rule = dict(rule)
+                    break
+
+            if not current_rule:
+                raise ValueError(f"Rule {self._rule_id} not found")
+
+            current_rule["status"] = status
+            # Ensure required fields are in payload
+            current_rule.setdefault("urls", [])
+            current_rule.setdefault("sourceIds", [])
+
+            success = await self.hass.async_add_executor_job(
+                self._api.update_url_filter,
+                self._rule_id,
+                current_rule
+            )
+
+            if not success:
+                raise ValueError(f"Failed to update URL filter {self._rule_id}")
+
+            await self.coordinator.async_request_refresh()
+
+        except Exception as error:
+            _LOGGER.error("Failed to update URL filter status: %s", error)
             raise

@@ -42,15 +42,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass.async_add_executor_job(lambda: api.get_acl_rules(2)),
                 hass.async_add_executor_job(api.get_networks),
                 hass.async_add_executor_job(api.get_ip_groups),
-                hass.async_add_executor_job(api.get_all_ssids)
+                hass.async_add_executor_job(api.get_all_ssids),
+                hass.async_add_executor_job(lambda: api.get_url_filters("gateway")),
+                hass.async_add_executor_job(lambda: api.get_url_filters("ap"))
             ]
 
             results = await asyncio.gather(*tasks)
-            devices, clients, gateway_rules, switch_rules, eap_rules, networks, ip_groups, ssids = results
+            devices, clients, gateway_rules, switch_rules, eap_rules, networks, ip_groups, ssids, gateway_url_filters, eap_url_filters = results
 
-            if not devices or not clients:
-                raise UpdateFailed("Failed to fetch data")
-
+            # Add to new_data dictionary:
             new_data = {
                 "devices": devices.get("result", {}).get("data", []),
                 "clients": clients.get("result", {}).get("data", []),
@@ -61,7 +61,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 },
                 "networks": networks.get("result", {}).get("data", []),
                 "ip_groups": ip_groups.get("result", {}).get("data", []),
-                "ssids": ssids.get("result", {}).get("data", [])
+                "ssids": ssids.get("result", {}).get("data", []),
+                "url_filters": {
+                    "gateway": gateway_url_filters.get("result", {}).get("data", []),
+                    "ap": eap_url_filters.get("result", {}).get("data", [])
+                }
             }
 
             await cleanup_stale_entities(hass, entry.entry_id, new_data)
@@ -100,6 +104,11 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
         for rule in data["acl_rules"].get(device_type, []):
             current_acl_rules.add(f"acl_rule_{device_type}_{rule.get('id')}")
 
+    current_url_filters = set()
+    for filter_type in ["gateway", "ap"]:
+        for rule in data["url_filters"].get(filter_type, []):
+            current_url_filters.add(f"url_filter_{filter_type}_{rule.get('id')}")
+
     # Create a list of devices to remove
     devices_to_remove = []
     for device_id, device in list(device_registry.devices.items()):
@@ -114,6 +123,9 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
                     devices_to_remove.append(device_id)
             elif device_key.startswith("acl_rule_"):
                 if device_key not in current_acl_rules:
+                    devices_to_remove.append(device_id)
+            elif device_key.startswith("url_filter_"):
+                if device_key not in current_url_filters:
                     devices_to_remove.append(device_id)
 
     # Remove stale devices

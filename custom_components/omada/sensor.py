@@ -32,17 +32,17 @@ _LOGGER = logging.getLogger(__name__)
 
 # ACL Rule sensor definitions
 ACL_RULE_SENSOR_DEFINITIONS = [
-    ("OmadaACLRuleSensor", "policy", "Policy", "policy"),
-    ("OmadaACLRuleSensor", "protocols", "Protocols", "protocols"),
-    ("OmadaACLRuleSensor", "src_ip", "Source IP", "srcIp"),
-    ("OmadaACLRuleSensor", "dst_ip", "Destination IP", "dstIp"),
-    ("OmadaACLRuleSensor", "src_port", "Source Port", "srcPort"),
-    ("OmadaACLRuleSensor", "dst_port", "Destination Port", "dstPort"),
-    ("OmadaACLRuleSensor", "status", "Status", "status"),
-    ("OmadaACLRuleSensor", "source_type", "Source Type", "sourceType"),
-    ("OmadaACLRuleSensor", "destination_type", "Destination Type", "destinationType"),
-    ("OmadaACLRuleSensor", "source_ids", "Source", "sourceIds"),
-    ("OmadaACLRuleSensor", "destination_ids", "Destination", "destinationIds")
+    ("OmadaACLRuleSensor", "policy", "policy", "Policy"),
+    ("OmadaACLRuleSensor", "protocols", "protocols", "Protocols"),
+    ("OmadaACLRuleSensor", "src_ip", "srcIp", "Source IP"),
+    ("OmadaACLRuleSensor", "dst_ip", "dstIp", "Destination IP"),
+    ("OmadaACLRuleSensor", "src_port", "srcPort", "Source Port"),
+    ("OmadaACLRuleSensor", "dst_port", "dstPort", "Destination Port"),
+    ("OmadaACLRuleSensor", "status", "status", "Status"),
+    ("OmadaACLRuleSensor", "source_type", "sourceType", "Source Type"),
+    ("OmadaACLRuleSensor", "destination_type", "destinationType", "Destination Type"),
+    ("OmadaACLRuleSensor", "source_ids", "sourceIds", "Source"),
+    ("OmadaACLRuleSensor", "destination_ids", "destinationIds", "Destination")
 ]
 
 # ACL Type mappings
@@ -78,9 +78,10 @@ CLIENT_SENSOR_DEFINITIONS = [
     ("OmadaClientTrafficSensor", "traffic_up", "trafficUp", "Traffic Up"),
     ("OmadaClientTrafficSensor", "traffic_down", "trafficDown", "Traffic Down"),
     ("OmadaClientPacketSensor", "down_packet", "downPacket", "Packets Down"),
-    ("OmadaClientPacketSensor", "up_packet", "upPacket", "Packets Up"),
+    ("OmadaClientPacketSensor", "up_packet", "upPacket", "Packets Up")
 ]
 
+# Device sensor definitions tuple (class_name, entity_id, attribute, display_name)
 DEVICE_SENSOR_DEFINITIONS = [
     ("OmadaDeviceBasicSensor", "model", "model", "Model"),
     ("OmadaDeviceBasicSensor", "compound_model", "compoundModel", "Compound Model"),
@@ -107,8 +108,24 @@ DEVICE_SENSOR_DEFINITIONS = [
     ("OmadaDeviceBasicSensor", "category", "category", "Category"),
     ("OmadaDeviceBasicSensor", "config_sync_status", "configSyncStatus", "Config Sync Status"),
     ("OmadaDeviceBasicSensor", "support_running_config", "supportRunningConfig", "Support Running Config"),
-    ("OmadaDeviceBasicSensor", "license_status", "licenseStatusStr", "License Status"),
+    ("OmadaDeviceBasicSensor", "license_status", "licenseStatusStr", "License Status")
 ]
+
+# URL Filter sensor definitions tuple (class_name, entity_id, attribute, display_name)
+URL_FILTER_SENSOR_DEFINITIONS = [
+    ("OmadaURLFilterSensor", "policy", "policy", "Policy"),
+    ("OmadaURLFilterSensor", "source_type", "sourceType", "Source Type"),
+    ("OmadaURLFilterSensor", "source_ids", "sourceIds", "Source"),
+    ("OmadaURLFilterSensor", "mode", "mode", "Mode"),
+    ("OmadaURLFilterSensor", "urls", "urls", "URLs"),
+    ("OmadaURLFilterSensor", "keywords", "keywords", "Keywords")
+]
+
+URL_FILTER_SOURCE_TYPE_MAP = {
+    0: "Network",
+    1: "IP Group",
+    2: "SSID"
+}
 
 # Protocol mappings
 PROTOCOL_MAP = {
@@ -140,6 +157,11 @@ PROTOCOL_MAP = {
     134: "RSVP-E2E-IGNORE", 135: "Mobility Header", 136: "UDPLite", 137: "MPLS-in-IP",
     138: "manet", 139: "HIP", 140: "Shim6", 141: "WESP", 142: "ROHC",
     143: "Ethernet", 144: "AGGFRAG", 145: "NSH", 256: "ALL"
+}
+
+URL_FILTER_MODE_MAP = {
+    0: "URL",
+    1: "Keyword"
 }
 
 # Add policy mapping
@@ -190,7 +212,7 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
             "identifiers": {(DOMAIN, f"acl_rule_{device_type}_{rule_id}")},
             "name": device_name,
             "manufacturer": "TP-Link",
-            "model": f"Omada ACL {device_type.capitalize()} Rule",
+            "model": f"Omada {device_type.capitalize()} ACL Rule",
         }
 
     def _get_source_dest_value(self, ids, type_value):
@@ -214,7 +236,7 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
                 else:
                     names.append(f"Unknown Network ({id})")
 
-        elif type_value in [1, 2]:  # IP Group or IP-Port Group
+        elif type_value in [1,2]:  # IP Group or IP-Port Group
             ip_groups = self.coordinator.data.get("ip_groups", [])
             _LOGGER.debug("Available IP groups: %s", ip_groups)
             for id in ids:
@@ -713,7 +735,7 @@ async def async_setup_entry(
                     rule_name = rule.get("name", rule.get("id", "Unknown"))
                     device_name = f"Omada ACL {device_type.capitalize()} Rule - {rule_name}"
 
-                    for class_name, entity_id, display_name, attribute in ACL_RULE_SENSOR_DEFINITIONS:
+                    for class_name, entity_id, attribute, display_name in ACL_RULE_SENSOR_DEFINITIONS:
                         entity_key = f"acl_rule_{device_type}_{rule_id}_{entity_id}"
                         if entity_key in tracked_entities:
                             continue
@@ -735,8 +757,142 @@ async def async_setup_entry(
                         tracked_entities[entity_key] = entity
                         new_entities.append(entity)
 
+        # Add URL filter sensors
+        if "url_filters" in coordinator.data:
+            for filter_type in ["gateway", "ap"]:
+                if filter_type not in coordinator.data["url_filters"]:
+                    continue
+
+                for rule in coordinator.data["url_filters"][filter_type]:
+                    rule_id = rule.get("id")
+                    if not rule_id:
+                        continue
+
+                    rule_name = rule.get("name", rule.get("id", "Unknown"))
+                    device_name = f"Omada {'Gateway' if filter_type == 'gateway' else 'EAP'} URL Filter - {rule_name}"
+
+                    for class_name, entity_id, attribute, display_name in URL_FILTER_SENSOR_DEFINITIONS:
+                        entity_key = f"url_filter_{filter_type}_{rule_id}_{entity_id}"
+                        if entity_key in tracked_entities:
+                            continue
+
+                        value = rule.get(attribute)
+                        if not is_valid_value(value):
+                            continue
+
+                        sensor_class = globals()[class_name]
+                        entity = sensor_class(
+                            coordinator,
+                            rule,
+                            filter_type,
+                            entity_id,
+                            attribute,
+                            display_name,
+                            device_name
+                        )
+                        tracked_entities[entity_key] = entity
+                        new_entities.append(entity)
+
         if new_entities:
             async_add_entities(new_entities)
 
     coordinator.async_add_listener(add_entities)
     add_entities()
+
+class OmadaURLFilterSensor(OmadaCoordinatorEntity, SensorEntity):
+    """Sensor for URL filter attributes."""
+
+    def __init__(self, coordinator, rule, filter_type, entity_id, attribute, display_name, device_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._rule = rule
+        self._filter_type = filter_type
+        self._attribute = attribute
+        self._display_name = display_name
+        self._last_value = None
+
+        rule_id = rule.get("id", "unknown")
+        self._attr_unique_id = f"url_filter_{filter_type}_{rule_id}_{entity_id}"
+        self._attr_name = f"{device_name} {display_name}"
+
+        model_name = f"Omada {'Gateway' if filter_type == 'gateway' else 'EAP'} URL Filter"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"url_filter_{filter_type}_{rule_id}")},
+            "name": device_name,
+            "manufacturer": "TP-Link",
+            "model": model_name,
+        }
+
+    def _format_value(self, value):
+        """Format the value based on attribute type."""
+        if self._attribute == "mode":
+            return URL_FILTER_MODE_MAP.get(value, f"Unknown ({value})")
+        elif self._attribute == "sourceType":
+            try:
+                return URL_FILTER_SOURCE_TYPE_MAP.get(int(value), f"Unknown ({value})")
+            except (ValueError, TypeError):
+                return f"Unknown ({value})"
+        elif self._attribute == "policy":
+            try:
+                return POLICY_MAP.get(int(value), f"Unknown ({value})")
+            except (ValueError, TypeError):
+                return f"Unknown ({value})"
+        elif self._attribute == "sourceIds":
+            type_value = self._rule.get("sourceType")
+            return self._get_source_dest_value(value, type_value)
+        elif self._attribute in ["urls", "keywords"]:
+            if isinstance(value, list):
+                return ", ".join(value)
+            return str(value) if value else ""
+        return value
+
+    def _get_source_dest_value(self, ids, type_value):
+        """Get readable values for source/destination IDs based on type."""
+        if not ids:
+            return "None"
+
+        names = []
+        type_value = int(type_value) if type_value is not None else None
+
+        if type_value == 0:  # Network
+            networks = self.coordinator.data.get("networks", [])
+            for id in ids:
+                for network in networks:
+                    if network.get("id") == id:
+                        names.append(network.get("name", id))
+                        break
+                else:
+                    names.append(f"Unknown Network ({id})")
+
+        elif type_value == 1:  # IP Group
+            ip_groups = self.coordinator.data.get("ip_groups", [])
+            for id in ids:
+                for group in ip_groups:
+                    if group.get("groupId") == id:
+                        names.append(group.get("name", id))
+                        break
+                else:
+                    names.append(f"Unknown Group ({id})")
+
+        elif type_value == 2:  # SSID
+            ssids = self.coordinator.data.get("ssids", [])
+            for id in ids:
+                for ssid in ssids:
+                    if ssid.get("id") == id:
+                        names.append(ssid.get("name", id))
+                        break
+                else:
+                    names.append(f"Unknown SSID ({id})")
+
+        return ", ".join(names) if names else "Unknown"
+
+    @property
+    def native_value(self):
+        """Return the state of the sensor."""
+        rules = self.coordinator.data["url_filters"].get(self._filter_type, [])
+        for rule in rules:
+            if rule.get("id") == self._rule.get("id"):
+                value = rule.get(self._attribute)
+                self._last_value = self._format_value(value)
+                return self._last_value
+        return self._last_value

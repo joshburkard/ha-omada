@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.2.00021 | 28/11/2024 | added URL Filters |
 | 0.2.00020 | 28/11/2024 | renamed device models and manufacturer |
 | 0.2.00019 | 28/11/2024 | completly restructured, only Devices, Clients and ACL Rules are available at the moment, no URL Filters and no labels |
 | 0.1.00018 | 25/11/2024 | create and assign labels to devices |
