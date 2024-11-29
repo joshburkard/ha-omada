@@ -1,4 +1,4 @@
 ﻿all-files*.txt
 merge-files.ps1
 old
-test
+test/*
