@@ -5,7 +5,7 @@
     "dependencies": [],
     "codeowners": ["@joshburkard"],
     "requirements": ["requests>=2.31.0"],
-    "version": "0.2.00026",
+    "version": "0.2.00027",
     "config_flow": true,
     "iot_class": "local_polling"
 }
