@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.2.00026 | 29/11/2024 | added switches for 2.4 GHz and 5GHz radio on devices |
 | 0.2.00025 | 29/11/2024 | cleanup clients without entities |
 | 0.2.00024 | 29/11/2024 | fixed issue with Switches in ACL Rules and URL Filter, renaming devices |
 | 0.2.00023 | 29/11/2024 | added SSID switches to AP devices |

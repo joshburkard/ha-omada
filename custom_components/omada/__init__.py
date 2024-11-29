@@ -78,6 +78,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.debug("No EAP devices found for SSID overrides")
                 ssid_overrides = {}
 
+            # Get AP radio settings
+            ap_radio_settings = {}
+            for device in device_data:
+                if device.get("type") == "ap":
+                    mac = device.get("mac")
+                    if mac:
+                        settings = await hass.async_add_executor_job(
+                            api.get_device_ssid_overrides,  # This function already gets all device settings
+                            mac
+                        )
+                        ap_radio_settings[mac] = settings
+
+            # Get AP device data (including radio settings)
+            ap_data = {}
+            for device in device_data:
+                if device.get("type") == "ap":
+                    mac = device.get("mac")
+                    if mac:
+                        _LOGGER.debug("Getting radio settings for AP %s", mac)
+                        settings = await hass.async_add_executor_job(
+                            api.get_device_radio,
+                            mac
+                        )
+                        _LOGGER.debug("Radio settings response for %s: %s", mac, settings)
+                        ap_data[mac] = settings
+            _LOGGER.debug("Collected AP data: %s", ap_data)
+
             # Add to new_data dictionary:
             new_data = {
                 "devices": device_data,
@@ -94,7 +121,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "gateway": gateway_url_filters.get("result", {}).get("data", []),
                     "ap": eap_url_filters.get("result", {}).get("data", [])
                 },
-                "ssid_overrides": ssid_overrides
+                "ssid_overrides": ssid_overrides,
+                "ap_radio_settings": ap_radio_settings,
+                "ap_data": ap_data
             }
 
             _LOGGER.debug("Final coordinator data structure: %s", new_data.keys())
