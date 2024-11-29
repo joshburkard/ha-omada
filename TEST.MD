@@ -7,6 +7,9 @@
   - normal sensors
   - binary sensors
   - device trackers
+- are new clients automatically added
+- will offline clients stay
+- does the device tracker work
 
 ## Devices
 
@@ -14,7 +17,11 @@
 - are there:
   - normal sensors
   - binary sensors
-  - switches for SSID and do they work (on Access Points only)
+  - switches for SSID (on Access Points only):
+    - do they work
+    - are they automatically added and removed
+- are new devices added automatically
+- are removed devices removed automatically
 
 ## ACL Rules
 
