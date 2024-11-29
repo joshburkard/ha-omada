@@ -178,11 +178,13 @@ class OmadaAPI:
             if response and "result" in response:
                 radioSetting2g = response["result"].get("radioSetting2g", []).get("radioEnable", [])
                 radioSetting5g = response["result"].get("radioSetting5g", []).get("radioEnable", [])
+                ledSetting = response["result"].get("ledSetting", [])
 
                 # _LOGGER.debug("Got radioSetting2g for device %s: %s", mac, radioSetting2g)
                 return {
                     "radioSetting2g": radioSetting2g,
-                    "radioSetting5g": radioSetting5g
+                    "radioSetting5g": radioSetting5g,
+                    "ledSetting": ledSetting
                 }
             return []
         except Exception as e:
@@ -430,8 +432,8 @@ class OmadaAPI:
             _LOGGER.debug("Updating SSID overrides at %s with payload: %s", url, payload)
 
             # Verify payload has required structure
-            if "ssidOverrides" not in payload or "wlanId" not in payload:
-                raise ValueError("Payload must contain ssidOverrides and wlanId")
+            #if "ssidOverrides" not in payload or "wlanId" not in payload:
+            #    raise ValueError("Payload must contain ssidOverrides and wlanId")
 
             response = self._make_request("PATCH", url, json=payload)
             return response.get("errorCode", -1) == 0
