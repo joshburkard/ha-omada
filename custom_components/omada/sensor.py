@@ -208,11 +208,18 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = f"{device_name} {display_name}"
 
         # Set up device info
+        if device_type == 'gateway':
+            model_name = 'Omada Gateway ACL Rule'
+        if device_type == 'switch':
+            model_name = 'Omada Switch ACL Rule'
+        else:
+            model_name = 'Omada EAP ACL Rule'
+
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"acl_rule_{device_type}_{rule_id}")},
             "name": device_name,
             "manufacturer": "TP-Link",
-            "model": f"Omada {device_type.capitalize()} ACL Rule",
+            "model": model_name,
         }
 
     def _get_source_dest_value(self, ids, type_value):
@@ -733,7 +740,16 @@ async def async_setup_entry(
                         continue
 
                     rule_name = rule.get("name", rule.get("id", "Unknown"))
-                    device_name = f"Omada ACL {device_type.capitalize()} Rule - {rule_name}"
+                    if device_type == 'gateway':
+                        device_type_name = 'Gateway'
+                        device_name = f"Omada Gateway ACL Rule - {rule_name}"
+                    elif device_type == 'switch':
+                        device_type_name = 'Switch'
+                        device_name = f"Omada Switch ACL Rule - {rule_name}"
+                    else:
+                        device_type_name = 'EAP'
+                        device_name = f"Omada EAP ACL Rule - {rule_name}"
+                    # device_name = f"Omada ACL {device_type.capitalize()} Rule - {rule_name}"
 
                     for class_name, entity_id, attribute, display_name in ACL_RULE_SENSOR_DEFINITIONS:
                         entity_key = f"acl_rule_{device_type}_{rule_id}_{entity_id}"

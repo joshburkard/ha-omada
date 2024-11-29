@@ -12,119 +12,106 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+_SWITCHES = {}  # Store switches globally to persist between updates
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up switches for ACL rules."""
+    """Set up switches."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     api = hass.data[DOMAIN][config_entry.entry_id]["api"]
-
-    switches = {}
 
     @callback
     def async_add_switches():
         """Add new switches."""
         new_switches = []
-        current_rules = set()
-
-        # Add SSID Override switches for AP devices
-        _LOGGER.debug("Starting switch creation process")
-
-        _LOGGER.debug("Coordinator data keys: %s", list(coordinator.data.keys()))
-        _LOGGER.debug("Coordinator data content: %s", coordinator.data)
-
-        if "devices" not in coordinator.data:
-            _LOGGER.debug("No devices found in coordinator data")
-            return
-
-        if "ssid_overrides" not in coordinator.data:
-            _LOGGER.debug("No ssid_overrides found in coordinator data")
-            return
-
-        _LOGGER.debug("Processing devices for SSID override switches")
-        _LOGGER.debug("Coordinator data keys: %s", list(coordinator.data.keys()))
-        _LOGGER.debug("Devices in coordinator: %s", [f"{d.get('mac')} ({d.get('type')})" for d in coordinator.data["devices"]])
-
-        for device in coordinator.data["devices"]:
-            device_mac = device.get("mac")
-            device_type = device.get("type")
-            _LOGGER.debug("Processing device %s of type %s", device_mac, device_type)
-
-            if device_type == "ap":
-                _LOGGER.debug("Found AP device: %s", device_mac)
-                device_overrides = coordinator.data["ssid_overrides"].get(device_mac, [])
-                _LOGGER.debug("Found %d SSID overrides for device %s", len(device_overrides), device_overrides)
-                """
-                _LOGGER.debug("Found %d SSID overrides for device %s: %s",
-                             len(device_overrides), device_mac,
-                             [o.get("ssid") for o in device_overrides])
-                """
-
-                for override in device_overrides:
-                    ssid_name = override.get("ssid")
-                    _LOGGER.debug("Processing SSID %s for device %s", ssid_name, device_mac)
-
-                    switch_id = f"device_{device_mac}_ssid_{ssid_name}"
-                    if switch_id in switches:
-                        _LOGGER.debug("Switch %s already exists", switch_id)
-                        continue
-
-                    _LOGGER.debug("Creating new switch %s", switch_id)
-                    switch = OmadaSSIDOverrideSwitch(
-                        coordinator,
-                        api,
-                        device,
-                        ssid_name
-                    )
-                    switches[switch_id] = switch
-                    new_switches.append(switch)
-                    _LOGGER.debug("Created switch for %s - %s", device_mac, ssid_name)
 
         # Add ACL Rule switches
         for device_type in ["gateway", "switch", "eap"]:
-            if device_type not in coordinator.data["acl_rules"]:
-                continue
+            if device_type in coordinator.data.get("acl_rules", {}):
+                for rule in coordinator.data["acl_rules"][device_type]:
+                    rule_id = rule.get("id")
+                    if not rule_id:
+                        continue
 
-            for rule in coordinator.data["acl_rules"][device_type]:
-                rule_id = rule.get("id")
-                if not rule_id:
-                    continue
+                    identifier = f"{device_type}_{rule_id}"
+                    if identifier not in _SWITCHES:
+                        _LOGGER.debug("Adding new ACL rule switch: %s", identifier)
+                        rule_name = rule.get("name", rule_id)
+                        if device_type == 'gateway':
+                            device_name = f"Omada Gateway ACL Rule - {rule_name}"
+                        if device_type == 'switch':
+                            device_name = f"Omada Switch ACL Rule - {rule_name}"
+                        else:
+                            device_name = f"Omada EAP ACL Rule - {rule_name}"
 
-                identifier = f"{device_type}_{rule_id}"
-                current_rules.add(identifier)
-
-                if identifier not in switches:
-                    rule_name = rule.get("name", rule_id)
-                    device_name = f"Omada ACL {device_type.capitalize()} Rule - {rule_name}"
-                    switch = OmadaACLRuleSwitch(coordinator, api, rule, device_type, device_name)
-                    switches[identifier] = switch
-                    new_switches.append(switch)
+                        # device_name = f"Omada ACL {device_type.capitalize()} Rule - {rule_name}"
+                        switch = OmadaACLRuleSwitch(
+                            coordinator,
+                            api,
+                            rule,
+                            device_type,
+                            device_name
+                        )
+                        _SWITCHES[identifier] = switch
+                        new_switches.append(switch)
 
         # Add URL Filter switches
         for filter_type in ["gateway", "ap"]:
-            if filter_type not in coordinator.data["url_filters"]:
-                continue
+            if filter_type in coordinator.data.get("url_filters", {}):
+                for rule in coordinator.data["url_filters"][filter_type]:
+                    rule_id = rule.get("id")
+                    if not rule_id:
+                        continue
 
-            for rule in coordinator.data["url_filters"][filter_type]:
-                rule_id = rule.get("id")
-                if not rule_id:
-                    continue
+                    identifier = f"{filter_type}_url_{rule_id}"
+                    if identifier not in _SWITCHES:
+                        _LOGGER.debug("Adding new URL filter switch: %s", identifier)
+                        rule_name = rule.get("name", rule_id)
+                        device_name = f"Omada {'Gateway' if filter_type == 'gateway' else 'EAP'} URL Filter - {rule_name}"
+                        switch = OmadaURLFilterSwitch(
+                            coordinator,
+                            api,
+                            rule,
+                            filter_type,
+                            device_name
+                        )
+                        _SWITCHES[identifier] = switch
+                        new_switches.append(switch)
 
-                identifier = f"{filter_type}_url_{rule_id}"
-                if identifier not in switches:
-                    rule_name = rule.get("name", rule_id)
-                    device_name = f"Omada {'Gateway' if filter_type == 'gateway' else 'EAP'} URL Filter - {rule_name}"
-                    switch = OmadaURLFilterSwitch(coordinator, api, rule, filter_type, device_name)
-                    switches[identifier] = switch
-                    new_switches.append(switch)
+        # Add SSID Override switches
+        if "devices" in coordinator.data and "ssid_overrides" in coordinator.data:
+            for device in coordinator.data["devices"]:
+                if device.get("type") == "ap":
+                    device_mac = device.get("mac")
+                    device_overrides = coordinator.data["ssid_overrides"].get(device_mac, [])
+
+                    for override in device_overrides:
+                        ssid_name = override.get("ssid")
+                        if not ssid_name:
+                            continue
+
+                        switch_id = f"device_{device_mac}_ssid_{ssid_name}"
+                        if switch_id not in _SWITCHES:
+                            _LOGGER.debug("Adding new SSID override switch: %s", switch_id)
+                            switch = OmadaSSIDOverrideSwitch(
+                                coordinator,
+                                api,
+                                device,
+                                ssid_name
+                            )
+                            _SWITCHES[switch_id] = switch
+                            new_switches.append(switch)
 
         if new_switches:
+            _LOGGER.debug("Adding %d new switches", len(new_switches))
             async_add_entities(new_switches)
 
     coordinator.async_add_listener(async_add_switches)
     async_add_switches()
+
 
 class OmadaACLRuleSwitch(OmadaCoordinatorEntity, SwitchEntity):
     """Representation of an ACL rule switch."""
@@ -139,11 +126,18 @@ class OmadaACLRuleSwitch(OmadaCoordinatorEntity, SwitchEntity):
         self._attr_name = f"{device_name} Status"
         self._attr_unique_id = f"acl_rule_{device_type}_{self._rule_id}_status"
 
+        if device_type == 'gateway':
+            model_name = 'Omada Gateway ACL Rule'
+        if device_type == 'switch':
+            model_name = 'Omada Switch ACL Rule'
+        else:
+            model_name = 'Omada EAP ACL Rule'
+
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"acl_rule_{device_type}_{self._rule_id}")},
             "name": device_name,
             "manufacturer": "TP-Link",
-            "model": f"Omada {device_type.capitalize()} ACL Rule",
+            "model": model_name,
         }
 
     @property
