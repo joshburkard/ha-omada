@@ -2,6 +2,9 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.2.00025 | 29/11/2024 | cleanup clients without entities |
+| 0.2.00024 | 29/11/2024 | fixed issue with Switches in ACL Rules and URL Filter, renaming devices |
+| 0.2.00023 | 29/11/2024 | added SSID switches to AP devices |
 | 0.2.00022 | 28/11/2024 | changed file encoding to utf-8 |
 | 0.2.00021 | 28/11/2024 | added URL Filters |
 | 0.2.00020 | 28/11/2024 | renamed device models and manufacturer |

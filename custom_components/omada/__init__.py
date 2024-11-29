@@ -34,6 +34,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             await hass.async_add_executor_job(api.authenticate)
 
+            # Get basic data first
             tasks = [
                 hass.async_add_executor_job(api.get_devices),
                 hass.async_add_executor_job(api.get_clients),
@@ -50,9 +51,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             results = await asyncio.gather(*tasks)
             devices, clients, gateway_rules, switch_rules, eap_rules, networks, ip_groups, ssids, gateway_url_filters, eap_url_filters = results
 
+            # Get SSID overrides for EAP devices
+            ssid_override_tasks = []
+            device_macs = []
+            device_data = devices.get("result", {}).get("data", [])
+
+            _LOGGER.debug("Processing devices for SSID overrides")
+            for device in device_data:
+                if device.get("type") == "ap":
+                    mac = device.get("mac")
+                    _LOGGER.debug("Found EAP device: %s", mac)
+                    device_macs.append(mac)
+                    ssid_override_tasks.append(
+                        hass.async_add_executor_job(
+                            api.get_device_ssid_overrides,
+                            mac
+                        )
+                    )
+
+            if ssid_override_tasks:
+                _LOGGER.debug("Fetching SSID overrides for %d devices", len(ssid_override_tasks))
+                ssid_override_results = await asyncio.gather(*ssid_override_tasks)
+                ssid_overrides = dict(zip(device_macs, ssid_override_results))
+                _LOGGER.debug("SSID overrides data: %s", ssid_overrides)
+            else:
+                _LOGGER.debug("No EAP devices found for SSID overrides")
+                ssid_overrides = {}
+
             # Add to new_data dictionary:
             new_data = {
-                "devices": devices.get("result", {}).get("data", []),
+                "devices": device_data,
                 "clients": clients.get("result", {}).get("data", []),
                 "acl_rules": {
                     "gateway": gateway_rules.get("result", {}).get("data", []),
@@ -65,9 +93,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "url_filters": {
                     "gateway": gateway_url_filters.get("result", {}).get("data", []),
                     "ap": eap_url_filters.get("result", {}).get("data", [])
-                }
+                },
+                "ssid_overrides": ssid_overrides
             }
 
+            _LOGGER.debug("Final coordinator data structure: %s", new_data.keys())
             await cleanup_stale_entities(hass, entry.entry_id, new_data)
             return new_data
 
@@ -93,25 +123,85 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict):
-    """Remove stale devices and their entities."""
     device_registry = dr_async_get(hass)
     entity_registry = er_async_get(hass)
 
     # Get current device IDs
     current_device_macs = {device["mac"] for device in data["devices"]}
+
+    # Build ACL rules set
     current_acl_rules = set()
     for device_type in ["gateway", "switch", "eap"]:
         for rule in data["acl_rules"].get(device_type, []):
-            current_acl_rules.add(f"acl_rule_{device_type}_{rule.get('id')}")
+            rule_id = rule.get("id")
+            if rule_id:
+                device_id = f"acl_rule_{device_type}_{rule_id}"
+                switch_id = f"{device_id}_status"
+                current_acl_rules.add(device_id)
+                current_acl_rules.add(switch_id)
 
+    # Build URL filters set
     current_url_filters = set()
     for filter_type in ["gateway", "ap"]:
         for rule in data["url_filters"].get(filter_type, []):
-            current_url_filters.add(f"url_filter_{filter_type}_{rule.get('id')}")
+            rule_id = rule.get("id")
+            if rule_id:
+                device_id = f"url_filter_{filter_type}_{rule_id}"
+                switch_id = f"{device_id}_status"
+                current_url_filters.add(device_id)
+                current_url_filters.add(switch_id)
+
+    # Build SSID overrides set
+    current_ssids = set()
+    for device_mac, overrides in data.get("ssid_overrides", {}).items():
+        for override in overrides:
+            ssid_name = override.get("ssid")
+            if ssid_name:
+                switch_id = f"device_{device_mac}_ssid_{ssid_name}"
+                current_ssids.add(switch_id)
+
+    # Clean up stale entities
+    entities_to_remove = []
+    for entry in entity_registry.entities.values():
+        if entry.domain == "switch":
+            unique_id = entry.unique_id
+            if unique_id.startswith("device_") and "_ssid_" in unique_id:
+                if unique_id not in current_ssids:
+                    entities_to_remove.append(entry.entity_id)
+            elif unique_id.startswith("acl_rule_"):
+                if unique_id not in current_acl_rules:
+                    entities_to_remove.append(entry.entity_id)
+            elif unique_id.startswith("url_filter_"):
+                if unique_id not in current_url_filters:
+                    entities_to_remove.append(entry.entity_id)
+
+    # Remove stale entities
+    for entity_id in entities_to_remove:
+        _LOGGER.debug("Removing stale entity: %s", entity_id)
+        entity_registry.async_remove(entity_id)
 
     # Create a list of devices to remove
     devices_to_remove = []
+
+    # Check client devices for entities
+    client_devices = {device_id: device for device_id, device in list(device_registry.devices.items())
+                     if any(identifier[0] == DOMAIN and identifier[1].startswith("client_")
+                           for identifier in device.identifiers)}
+
+    for device_id, device in client_devices.items():
+        # Get all entities for this device
+        device_entities = [
+            entry.entity_id for entry in entity_registry.entities.values()
+            if entry.device_id == device_id
+        ]
+        if not device_entities:
+            devices_to_remove.append(device_id)
+
+    # Check other devices
     for device_id, device in list(device_registry.devices.items()):
+        if device_id in client_devices:
+            continue
+
         for identifier in device.identifiers:
             if identifier[0] != DOMAIN:
                 continue
@@ -130,6 +220,7 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
 
     # Remove stale devices
     for device_id in devices_to_remove:
+        _LOGGER.debug("Removing stale device: %s", device_id)
         device_registry.async_remove_device(device_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
