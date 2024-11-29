@@ -152,6 +152,23 @@ class OmadaAPI:
             _LOGGER.error("Failed to get devices: %s", str(e))
             return []
 
+    def get_device_ssid_overrides(self, mac: str):
+        """Get SSID overrides for an AP device."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/eaps/{mac}"
+            _LOGGER.debug("Getting SSID overrides from %s", url)
+            response = self._make_request("GET", url)
+            if response and "result" in response:
+                wlanId = response["result"].get("wlanId", [])
+                ssid_overrides = response["result"].get("ssidOverrides", [])
+
+                _LOGGER.debug("Got SSID overrides for device %s: %s", mac, ssid_overrides)
+                return ssid_overrides
+            return []
+        except Exception as e:
+            _LOGGER.error("Failed to get SSID overrides for device %s: %s", mac, str(e))
+            return []
+
     def get_clients(self):
         """Get all clients from Omada Controller."""
         try:
@@ -383,4 +400,21 @@ class OmadaAPI:
 
         except Exception as e:
             _LOGGER.error("Failed to update URL filter: %s", str(e))
+            return False
+
+    def update_device_ssid_overrides(self, device_mac: str, payload: dict) -> bool:
+        """Update SSID overrides for an AP device."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/eaps/{device_mac}"
+            _LOGGER.debug("Updating SSID overrides at %s with payload: %s", url, payload)
+
+            # Verify payload has required structure
+            if "ssidOverrides" not in payload or "wlanId" not in payload:
+                raise ValueError("Payload must contain ssidOverrides and wlanId")
+
+            response = self._make_request("PATCH", url, json=payload)
+            return response.get("errorCode", -1) == 0
+
+        except Exception as e:
+            _LOGGER.error("Failed to update SSID overrides for device %s: %s", device_mac, str(e))
             return False
