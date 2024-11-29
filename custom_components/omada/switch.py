@@ -105,6 +105,24 @@ async def async_setup_entry(
                             _SWITCHES[switch_id] = switch
                             new_switches.append(switch)
 
+        # Add Radio switches for AP devices
+        if "devices" in coordinator.data:
+            for device in coordinator.data["devices"]:
+                if device.get("type") == "ap":
+                    device_mac = device.get("mac")
+
+                    for radio_type in ["2g", "5g"]:
+                        switch_id = f"device_{device_mac}_radio_{radio_type}"
+                        if switch_id not in _SWITCHES:
+                            switch = OmadaRadioSwitch(
+                                coordinator,
+                                api,
+                                device,
+                                radio_type
+                            )
+                            _SWITCHES[switch_id] = switch
+                            new_switches.append(switch)
+
         if new_switches:
             _LOGGER.debug("Adding %d new switches", len(new_switches))
             async_add_entities(new_switches)
@@ -266,6 +284,7 @@ class OmadaSSIDOverrideSwitch(OmadaCoordinatorEntity, SwitchEntity):
 
         self._attr_name = f"{device_name} SSID {ssid_name}"
         self._attr_unique_id = f"device_{self._device_mac}_ssid_{ssid_name}"
+        self._attr_icon = "mdi:wifi"
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"device_{self._device_mac}")},
@@ -353,4 +372,81 @@ class OmadaSSIDOverrideSwitch(OmadaCoordinatorEntity, SwitchEntity):
 
         except Exception as error:
             _LOGGER.error("Failed to update SSID override status: %s", error)
+            raise
+
+class OmadaRadioSwitch(OmadaCoordinatorEntity, SwitchEntity):
+    """Switch for AP radio control."""
+
+    def __init__(self, coordinator, api, device, radio_type):
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._api = api
+        self._device = device
+        self._device_mac = device.get("mac")
+        self._radio_type = radio_type
+        device_name = device.get("name", self._device_mac)
+        radio_name = "2.4GHz Radio" if radio_type == "2g" else "5GHz Radio"
+
+        self._attr_name = f"{device_name} {radio_name}"
+        self._attr_unique_id = f"device_{self._device_mac}_radio_{radio_type}"
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"device_{self._device_mac}")},
+            "name": device_name,
+            "manufacturer": "TP-Link",
+            "model": device.get("model", "Omada Device"),
+            "sw_version": device.get("firmwareVersion", "Unknown"),
+        }
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the radio is enabled."""
+        device_data = self.coordinator.data.get("ap_data", {}).get(self._device_mac)
+        _LOGGER.debug(f"is_on datas received for %s: %s", self._device_mac, device_data )
+        #if isinstance(device_data, list) and device_data:
+        #    device_data = device_data[0]
+        #elif not isinstance(device_data, dict):
+        #    return False
+
+        #setting_key = "radioSetting2g" if self._radio_type == "2g" else "radioSetting5g"
+        setting_key = "radioSetting2g" if self._radio_type == "2g" else "radioSetting5g"
+        return device_data.get(setting_key, {})
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn on the radio."""
+        await self._update_radio_status(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn off the radio."""
+        await self._update_radio_status(False)
+
+    async def _update_radio_status(self, status: bool) -> None:
+        """Update the radio status."""
+        try:
+            payload = {
+                "radioSetting2g" if self._radio_type == "2g" else "radioSetting5g": {
+                    "radioEnable": status
+                }
+            }
+
+            _LOGGER.debug("Updating %s radio status for device %s with payload: %s",
+                        self._radio_type, self._device_mac, payload)
+
+            success = await self.hass.async_add_executor_job(
+                self._api.update_device_radio,
+                self._device_mac,
+                payload
+            )
+
+            if not success:
+                _LOGGER.error("Failed to update %s radio status for device %s",
+                            self._radio_type, self._device_mac)
+                raise ValueError(f"Failed to update {self._radio_type} radio status for device {self._device_mac}")
+
+            _LOGGER.debug("Successfully updated %s radio status for device %s",
+                        self._radio_type, self._device_mac)
+            await self.coordinator.async_request_refresh()
+
+        except Exception as error:
+            _LOGGER.error("Error occurred while updating radio status: %s", str(error))
             raise

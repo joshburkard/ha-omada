@@ -120,7 +120,7 @@ class OmadaAPI:
             if not self.site_id:
                 raise ValueError(f"Site '{self.site_name}' not found")
 
-            _LOGGER.info("Successfully authenticated with Omada Controller")
+            _LOGGER.debug("Successfully authenticated with Omada Controller")
             return True
 
         except Exception as e:
@@ -168,6 +168,27 @@ class OmadaAPI:
         except Exception as e:
             _LOGGER.error("Failed to get SSID overrides for device %s: %s", mac, str(e))
             return []
+
+    def get_device_radio(self, mac: str):
+        """Get SSID overrides for an AP device."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/eaps/{mac}"
+            _LOGGER.debug("Getting radios from %s", url)
+            response = self._make_request("GET", url)
+            if response and "result" in response:
+                radioSetting2g = response["result"].get("radioSetting2g", []).get("radioEnable", [])
+                radioSetting5g = response["result"].get("radioSetting5g", []).get("radioEnable", [])
+
+                # _LOGGER.debug("Got radioSetting2g for device %s: %s", mac, radioSetting2g)
+                return {
+                    "radioSetting2g": radioSetting2g,
+                    "radioSetting5g": radioSetting5g
+                }
+            return []
+        except Exception as e:
+            _LOGGER.error("Failed to get SSID overrides for device %s: %s", mac, str(e))
+            return []
+
 
     def get_clients(self):
         """Get all clients from Omada Controller."""
@@ -411,6 +432,19 @@ class OmadaAPI:
             # Verify payload has required structure
             if "ssidOverrides" not in payload or "wlanId" not in payload:
                 raise ValueError("Payload must contain ssidOverrides and wlanId")
+
+            response = self._make_request("PATCH", url, json=payload)
+            return response.get("errorCode", -1) == 0
+
+        except Exception as e:
+            _LOGGER.error("Failed to update SSID overrides for device %s: %s", device_mac, str(e))
+            return False
+
+    def update_device_radio(self, device_mac: str, payload: dict) -> bool:
+        """Update SSID overrides for an AP device."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/eaps/{device_mac}"
+            _LOGGER.debug("Updating SSID overrides at %s with payload: %s", url, payload)
 
             response = self._make_request("PATCH", url, json=payload)
             return response.get("errorCode", -1) == 0
