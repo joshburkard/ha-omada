@@ -10,8 +10,8 @@ this features are already integrated:
 
 - Clients with a lot of sensors
 - Devices with a lot of sensors
-- ACL Rules
-- URL Filtering
+- ACL Rules with switch
+- URL Filtering with switch
 
 ## Setup
 

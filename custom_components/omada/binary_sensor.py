@@ -1,4 +1,4 @@
-﻿"""Binary sensor platform for Test HA Omada."""
+"""Binary sensor platform for Test HA Omada."""
 import logging
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,

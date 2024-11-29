@@ -1,5 +1,4 @@
 ﻿all-files*.txt
-.vscode
 merge-files.ps1
 old
 test
