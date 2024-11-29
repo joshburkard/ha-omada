@@ -1,4 +1,4 @@
-﻿"""Helper classes for Omada integration."""
+"""Helper classes for Omada integration."""
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.core import callback
 

@@ -24,5 +24,6 @@
         "titleBar.inactiveBackground": "#49a94299",
         "titleBar.inactiveForeground": "#15202b99"
     },
-    "peacock.color": "#49a942"
+    "peacock.color": "#49a942",
+    "files.encoding": "utf8"
 }

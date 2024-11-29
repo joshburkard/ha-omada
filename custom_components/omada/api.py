@@ -1,4 +1,4 @@
-﻿"""API client for Test HA Omada integration."""
+"""API client for Test HA Omada integration."""
 import logging
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
