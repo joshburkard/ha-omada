@@ -123,7 +123,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict):
-    """Remove stale devices and their entities."""
     device_registry = dr_async_get(hass)
     entity_registry = er_async_get(hass)
 
@@ -183,7 +182,26 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
 
     # Create a list of devices to remove
     devices_to_remove = []
+
+    # Check client devices for entities
+    client_devices = {device_id: device for device_id, device in list(device_registry.devices.items())
+                     if any(identifier[0] == DOMAIN and identifier[1].startswith("client_")
+                           for identifier in device.identifiers)}
+
+    for device_id, device in client_devices.items():
+        # Get all entities for this device
+        device_entities = [
+            entry.entity_id for entry in entity_registry.entities.values()
+            if entry.device_id == device_id
+        ]
+        if not device_entities:
+            devices_to_remove.append(device_id)
+
+    # Check other devices
     for device_id, device in list(device_registry.devices.items()):
+        if device_id in client_devices:
+            continue
+
         for identifier in device.identifiers:
             if identifier[0] != DOMAIN:
                 continue
