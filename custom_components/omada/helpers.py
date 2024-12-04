@@ -1,6 +1,14 @@
 """Helper classes for Omada integration."""
+import re
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.core import callback
+
+def standardize_mac(mac: str) -> str:
+    """Standardize MAC address format."""
+    # Remove any separators and convert to lowercase
+    clean_mac = re.sub('[.:-]', '', mac.lower())
+    # Insert colons every two characters
+    return ':'.join(clean_mac[i:i+2] for i in range(0, 12, 2))
 
 class OmadaCoordinatorEntity(CoordinatorEntity):
     """Base class for Omada entities."""

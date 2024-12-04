@@ -1,5 +1,6 @@
 """Device tracker for Test HA Omada."""
 from typing import Any
+import re
 
 from homeassistant.components.device_tracker import SourceType, TrackerEntity
 from homeassistant.components.device_tracker.const import ATTR_SOURCE_TYPE, DOMAIN as TRACKER_DOMAIN
@@ -8,10 +9,12 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as er_async_get
 
-from .helpers import OmadaCoordinatorEntity
+from .helpers import OmadaCoordinatorEntity, standardize_mac
 from .const import DOMAIN
 
-from typing import Any
+import logging
+_LOGGER = logging.getLogger(__name__)
+_TRACKERS = {}  # Store trackers globally
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -20,7 +23,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up device tracker for Omada Clients."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
-    tracked_clients = {}
     entity_registry = er_async_get(hass)
 
     @callback
@@ -33,20 +35,22 @@ async def async_setup_entry(
             if not mac:
                 continue
 
-            if mac not in tracked_clients:
-                tracker = OmadaClientTracker(coordinator, client)
-                tracked_clients[mac] = tracker
+            # Standardize MAC address format
+            mac = standardize_mac(mac)
+            tracker_id = f"{config_entry.entry_id}_tracker_{mac}"
+
+            # Check if entity exists in registry
+            tracker_exists = False
+            for entity in entity_registry.entities.values():
+                if entity.unique_id == tracker_id:
+                    tracker_exists = True
+                    break
+
+            if not tracker_exists and tracker_id not in _TRACKERS:
+                tracker = OmadaClientTracker(coordinator, client, config_entry.entry_id)
+                _TRACKERS[tracker_id] = tracker
                 new_clients.append(tracker)
-            else:
-                # Client exists but might be coming back online - ensure entities exist
-                if client.get("active", False):
-                    # Check if entity was previously removed
-                    entity_id = f"device_tracker.{tracked_clients[mac].name}".lower().replace(" ", "_")
-                    if not entity_registry.async_get(entity_id):
-                        # Re-add the tracker if it doesn't exist
-                        tracker = OmadaClientTracker(coordinator, client)
-                        tracked_clients[mac] = tracker
-                        new_clients.append(tracker)
+                _LOGGER.debug("Creating new device tracker %s for client %s", tracker_id, mac)
 
         if new_clients:
             async_add_entities(new_clients)
@@ -57,24 +61,26 @@ async def async_setup_entry(
 class OmadaClientTracker(OmadaCoordinatorEntity, TrackerEntity):
     """Representation of a network device."""
 
-    def __init__(self, coordinator, client):
+    def __init__(self, coordinator, client, entry_id):
         """Initialize the device."""
         super().__init__(coordinator)
         self._client = client
-        self._attr_unique_id = f"omada_tracker_{client['mac']}"
-        self._attr_name = client.get('name', client['mac'])
+        self._mac = standardize_mac(client['mac'])
+        self._attr_unique_id = f"{entry_id}_tracker_{self._mac}"
+        self._attr_name = client.get('name', self._mac)
         self._attr_entity_category = None
 
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"client_{client['mac']}")},
+            "identifiers": {(DOMAIN, f"client_{self._mac}")},
             "name": self.name,
             "manufacturer": client.get("manufacturer", "TP-Link"),
             "model": "Omada Client",
             "sw_version": client.get("os", "Unknown"),
+            "connections": {("mac", self._mac)}
         }
 
         self._last_ip = client.get("ip")
-        self._last_mac = client.get("mac")
+        self._last_mac = self._mac
 
     @property
     def source_type(self) -> SourceType:
@@ -90,7 +96,7 @@ class OmadaClientTracker(OmadaCoordinatorEntity, TrackerEntity):
     def is_connected(self) -> bool:
         """Return true if the client is connected."""
         for client in self.coordinator.data["clients"]:
-            if client["mac"] == self._client["mac"]:
+            if standardize_mac(client["mac"]) == self._mac:
                 # Check if client is in the online clients list (has active property)
                 if "active" in client:
                     return client["active"]
@@ -103,7 +109,7 @@ class OmadaClientTracker(OmadaCoordinatorEntity, TrackerEntity):
         """Return the primary ip address."""
         # Update IP address if client is found in current data
         for client in self.coordinator.data["clients"]:
-            if client["mac"] == self._client["mac"]:
+            if standardize_mac(client["mac"]) == self._mac:
                 self._last_ip = client.get("ip", self._last_ip)
                 break
         return self._last_ip
@@ -125,6 +131,6 @@ class OmadaClientTracker(OmadaCoordinatorEntity, TrackerEntity):
     def _is_client_in_data(self) -> bool:
         """Check if the client is in current data."""
         return any(
-            client["mac"] == self._client["mac"]
+            standardize_mac(client["mac"]) == self._mac
             for client in self.coordinator.data["clients"]
         )

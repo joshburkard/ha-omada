@@ -8,8 +8,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.select import SelectEntity
 
-from .helpers import OmadaCoordinatorEntity
+from .helpers import OmadaCoordinatorEntity, standardize_mac
 from .const import DOMAIN
+from homeassistant.helpers.entity_registry import async_get as er_async_get
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ async def async_setup_entry(
     """Set up switches."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     api = hass.data[DOMAIN][config_entry.entry_id]["api"]
+    entity_registry = er_async_get(hass)
 
     @callback
     def async_add_switches():
@@ -37,7 +39,15 @@ async def async_setup_entry(
                     continue
 
                 switch_id = f"client_{client_mac}_blocked"
-                if switch_id not in _SWITCHES:
+
+                # Check if switch exists in registry
+                switch_exists = False
+                for entity in entity_registry.entities.values():
+                    if entity.unique_id == switch_id:
+                        switch_exists = True
+                        break
+
+                if not switch_exists and switch_id not in _SWITCHES:
                     _LOGGER.debug("Adding new client block switch: %s", switch_id)
                     switch = OmadaClientBlockSwitch(
                         coordinator,
@@ -478,26 +488,28 @@ class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
         super().__init__(coordinator)
         self._api = api
         self._client = client
-        self._client_mac = client.get("mac")
-        client_name = client.get("name", self._client_mac)
+        self._mac = standardize_mac(client['mac'])
+        self._client_mac = self._mac  # Add this for compatibility
+        client_name = client.get('name', self._mac)
 
         self._attr_name = f"{client_name} Blocked"
-        self._attr_unique_id = f"client_{self._client_mac}_blocked"
+        self._attr_unique_id = f"client_{self._mac}_blocked"
         self._attr_icon = "mdi:wifi-off"
 
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"client_{self._client_mac}")},
+            "identifiers": {(DOMAIN, f"client_{self._mac}")},
             "name": client_name,
             "manufacturer": client.get("manufacturer", "TP-Link"),
             "model": "Omada Client",
             "sw_version": client.get("os", "Unknown"),
+            "connections": {("mac", self._mac)}
         }
 
     @property
     def is_on(self) -> bool:
         """Return true if client is blocked."""
         for client in self.coordinator.data["clients"]:
-            if client["mac"] == self._client_mac:
+            if standardize_mac(client["mac"]) == self._mac:
                 return client.get("block", False)
         return False
 
@@ -506,17 +518,16 @@ class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
         try:
             success = await self.hass.async_add_executor_job(
                 self._api.block_client,
-                self._client_mac
+                self._mac
             )
 
             if success:
-                # Force a coordinator update to get the new state
                 await self.coordinator.async_request_refresh()
             else:
-                _LOGGER.error("Failed to block client %s", self._client_mac)
+                _LOGGER.error("Failed to block client %s", self._mac)
 
         except Exception as error:
-            _LOGGER.error("Error blocking client %s: %s", self._client_mac, str(error))
+            _LOGGER.error("Error blocking client %s: %s", self._mac, str(error))
             raise
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -524,15 +535,14 @@ class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
         try:
             success = await self.hass.async_add_executor_job(
                 self._api.unblock_client,
-                self._client_mac
+                self._mac
             )
 
             if success:
-                # Force a coordinator update to get the new state
                 await self.coordinator.async_request_refresh()
             else:
-                _LOGGER.error("Failed to unblock client %s", self._client_mac)
+                _LOGGER.error("Failed to unblock client %s", self._mac)
 
         except Exception as error:
-            _LOGGER.error("Error unblocking client %s: %s", self._client_mac, str(error))
+            _LOGGER.error("Error unblocking client %s: %s", self._mac, str(error))
             raise

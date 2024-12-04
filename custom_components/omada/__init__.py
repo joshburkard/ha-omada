@@ -12,6 +12,7 @@ from homeassistant.helpers.device_registry import async_get as dr_async_get
 
 from .api import OmadaAPI
 from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
+from .helpers import OmadaCoordinatorEntity, standardize_mac, is_valid_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -158,7 +159,8 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
 
     # Get current device IDs
     current_device_macs = {device["mac"] for device in data["devices"]}
-    current_client_macs = {client["mac"] for client in data["clients"]}
+    current_client_macs = {standardize_mac(client["mac"]) for client in data["clients"]}
+    active_client_macs = {standardize_mac(client["mac"]) for client in data["clients"] if client.get("active", False)}
 
     # Build ACL rules set
     current_acl_rules = set()
@@ -204,15 +206,21 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
         # Check client-related entities
         if unique_id and (unique_id.startswith("client_") or unique_id.startswith("omada_tracker_")):
             # Extract MAC address from unique_id
-            # Format could be either "client_XX:XX:XX:XX:XX:XX_*" or "omada_tracker_XX:XX:XX:XX:XX:XX"
             parts = unique_id.split("_")
             if len(parts) >= 2:
-                mac = parts[1]
-                if unique_id.startswith("omada_tracker_"):
-                    mac = unique_id.replace("omada_tracker_", "")
+                mac = parts[1] if unique_id.startswith("client_") else unique_id.replace("omada_tracker_", "")
+                mac = standardize_mac(mac)
+
+                # Only remove entity if client is no longer in the known clients list
                 if mac not in current_client_macs:
                     should_remove = True
-                    _LOGGER.debug("Marking client entity for removal: %s (MAC: %s)", entry.entity_id, mac)
+                    _LOGGER.debug("Marking removed client entity for removal: %s (MAC: %s)", entry.entity_id, mac)
+                # For detailed sensors (except device tracker and block switch), remove if client is inactive
+                elif (not unique_id.startswith("omada_tracker_") and
+                      not unique_id.endswith("_blocked") and
+                      mac not in active_client_macs):
+                    should_remove = True
+                    _LOGGER.debug("Marking inactive client sensor for removal: %s (MAC: %s)", entry.entity_id, mac)
 
         # Check device entities
         elif unique_id and unique_id.startswith("device_"):
@@ -237,74 +245,28 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
             if unique_id not in current_ssids:
                 should_remove = True
 
-        # Check if entity is unavailable
-        if entry.device_id:
-            device = device_registry.async_get(entry.device_id)
-            if device and not device.disabled:
-                try:
-                    state = hass.states.get(entry.entity_id)
-                    if state and state.state == "unavailable":
-                        should_remove = True
-                        _LOGGER.debug("Marking unavailable entity for removal: %s", entry.entity_id)
-                except Exception as e:
-                    _LOGGER.warning("Error checking entity state: %s", e)
-
         if should_remove:
             entities_to_remove.append(entry.entity_id)
 
     # Remove stale entities
     for entity_id in entities_to_remove:
-        _LOGGER.info("Removing stale entity: %s", entity_id)
+        _LOGGER.debug("Removing stale entity: %s", entity_id)
         entity_registry.async_remove(entity_id)
 
-    # Clean up devices
-    devices_to_remove = []
-
-    # Check all devices
+    # Clean up devices that have no entities
     for device_id, device in device_registry.devices.items():
         if not any(identifier[0] == DOMAIN for identifier in device.identifiers):
             continue
 
-        for identifier in device.identifiers:
-            if identifier[0] != DOMAIN:
-                continue
-
-            device_key = identifier[1]
-            should_remove = False
-
-            if device_key.startswith("client_"):
-                # Extract MAC from client device identifier
-                mac = device_key.replace("client_", "")
-                if mac not in current_client_macs:
-                    should_remove = True
-                    _LOGGER.debug("Marking client device for removal: %s (MAC: %s)", device_id, mac)
-            elif device_key.startswith("device_"):
-                mac = device_key.replace("device_", "")
-                if mac not in current_device_macs:
-                    should_remove = True
-            elif device_key.startswith("acl_rule_"):
-                if device_key not in current_acl_rules:
-                    should_remove = True
-            elif device_key.startswith("url_filter_"):
-                if device_key not in current_url_filters:
-                    should_remove = True
-
-            # Check if all entities for this device are gone
-            device_entities = [
-                entry.entity_id for entry in entity_registry.entities.values()
-                if entry.device_id == device_id
-            ]
-            if not device_entities:
-                should_remove = True
-
-            if should_remove:
-                devices_to_remove.append(device_id)
+        has_entities = False
+        for entity in entity_registry.entities.values():
+            if entity.device_id == device_id and entity.entity_id not in entities_to_remove:
+                has_entities = True
                 break
 
-    # Remove stale devices
-    for device_id in devices_to_remove:
-        _LOGGER.info("Removing stale device: %s", device_id)
-        device_registry.async_remove_device(device_id)
+        if not has_entities:
+            _LOGGER.debug("Removing device without entities: %s", device_id)
+            device_registry.async_remove_device(device_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
