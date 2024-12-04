@@ -412,6 +412,15 @@ class OmadaClientBaseSensor(CoordinatorEntity, SensorEntity):
 class OmadaClientSignalSensor(OmadaClientBaseSensor):
     """Sensor for signal-related attributes."""
 
+    def __init__(self, coordinator, client, entity_id, attribute, display_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client, entity_id, attribute, display_name)
+
+        if self._attribute in ["rssi", "signalLevel"]:
+            self._attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+            self._attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
     @property
     def available(self) -> bool:
         """Return if entity is available."""
@@ -434,6 +443,12 @@ class OmadaClientSignalSensor(OmadaClientBaseSensor):
 class OmadaClientSpeedSensor(OmadaClientBaseSensor):
     """Sensor for speed-related attributes."""
 
+    def __init__(self, coordinator, client, entity_id, attribute, display_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client, entity_id, attribute, display_name)
+        self._attr_native_unit_of_measurement = UnitOfDataRate.MEGABITS_PER_SECOND
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+
     @property
     def available(self) -> bool:
         """Return if entity is available."""
@@ -455,6 +470,12 @@ class OmadaClientSpeedSensor(OmadaClientBaseSensor):
 
 class OmadaClientTrafficSensor(OmadaClientBaseSensor):
     """Sensor for traffic-related attributes."""
+
+    def __init__(self, coordinator, client, entity_id, attribute, display_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client, entity_id, attribute, display_name)
+        self._attr_native_unit_of_measurement = UnitOfDataRate.BYTES_PER_SECOND
+        self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def available(self) -> bool:
@@ -502,6 +523,11 @@ class OmadaClientWifiSensor(OmadaClientBaseSensor):
 class OmadaClientPacketSensor(OmadaClientBaseSensor):
     """Sensor for packet-related attributes."""
 
+    def __init__(self, coordinator, client, entity_id, attribute, display_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client, entity_id, attribute, display_name)
+        self._attr_state_class = SensorStateClass.TOTAL
+
     @property
     def state_class(self):
         """Return the state class."""
@@ -509,6 +535,11 @@ class OmadaClientPacketSensor(OmadaClientBaseSensor):
 
 class OmadaClientRadioSensor(OmadaClientBaseSensor):
     """Sensor for radio type."""
+
+    def __init__(self, coordinator, client, entity_id, attribute, display_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client, entity_id, attribute, display_name)
+        self._attr_entity_category = "diagnostic"  # Add this to indicate it's a diagnostic value
 
     @property
     def native_value(self):
@@ -525,6 +556,13 @@ class OmadaClientRadioSensor(OmadaClientBaseSensor):
 
 class OmadaClientTimeSensor(OmadaClientBaseSensor):
     """Sensor for time-related attributes."""
+
+    def __init__(self, coordinator, client, entity_id, attribute, display_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client, entity_id, attribute, display_name)
+        self._attr_device_class = SensorDeviceClass.DURATION
+        self._attr_native_unit_of_measurement = UnitOfTime.SECONDS
+        self._attr_state_class = SensorStateClass.TOTAL
 
     @property
     def device_class(self):
