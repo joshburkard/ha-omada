@@ -191,18 +191,17 @@ class OmadaAPI:
             _LOGGER.error("Failed to get SSID overrides for device %s: %s", mac, str(e))
             return []
 
-
-    def get_clients(self):
-        """Get all clients from Omada Controller."""
+    def get_known_clients(self):
+        """Get all known clients from Omada Controller."""
         try:
             all_clients = []
             current_page = 1
-            page_size = 10
+            page_size = 25
             total_rows = None
 
             while True:
-                url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/clients?currentPage={current_page}&currentPageSize={page_size}&filters.active=true"
-                _LOGGER.debug("Getting clients page %s from %s", current_page, url)
+                url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/insight/clients?currentPage={current_page}&currentPageSize={page_size}"
+                _LOGGER.debug("Getting known clients page %s from %s", current_page, url)
 
                 response = self._make_request("GET", url)
                 if not response or "result" not in response:
@@ -211,7 +210,7 @@ class OmadaAPI:
                 # Get total number of rows if we don't have it yet
                 if total_rows is None:
                     total_rows = response["result"].get("totalRows", 0)
-                    _LOGGER.debug("Total clients to fetch: %s", total_rows)
+                    _LOGGER.debug("Total known clients to fetch: %s", total_rows)
 
                 # Get current page's data
                 page_data = response["result"].get("data", [])
@@ -219,14 +218,109 @@ class OmadaAPI:
 
                 # Calculate if we need more pages
                 clients_so_far = len(all_clients)
-                _LOGGER.debug("Fetched %s clients so far out of %s", clients_so_far, total_rows)
+                _LOGGER.debug("Fetched %s known clients so far out of %s", clients_so_far, total_rows)
 
                 if clients_so_far >= total_rows or not page_data:
                     break
 
                 current_page += 1
 
-            _LOGGER.debug("Finished fetching all %s clients", len(all_clients))
+            _LOGGER.debug("Finished fetching all %s known clients", len(all_clients))
+            return {
+                "errorCode": 0,
+                "msg": "Success.",
+                "result": {
+                    "totalRows": len(all_clients),
+                    "data": all_clients
+                }
+            }
+
+        except Exception as e:
+            _LOGGER.error("Failed to get known clients: %s", str(e))
+            return []
+
+    def get_online_clients(self):
+        """Get all online clients from Omada Controller."""
+        try:
+            all_clients = []
+            current_page = 1
+            page_size = 10
+            total_rows = None
+
+            while True:
+                url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/clients?currentPage={current_page}&currentPageSize={page_size}&filters.active=true"
+                _LOGGER.debug("Getting online clients page %s from %s", current_page, url)
+
+                response = self._make_request("GET", url)
+                if not response or "result" not in response:
+                    break
+
+                # Get total number of rows if we don't have it yet
+                if total_rows is None:
+                    total_rows = response["result"].get("totalRows", 0)
+                    _LOGGER.debug("Total online clients to fetch: %s", total_rows)
+
+                # Get current page's data
+                page_data = response["result"].get("data", [])
+                all_clients.extend(page_data)
+
+                # Calculate if we need more pages
+                clients_so_far = len(all_clients)
+                _LOGGER.debug("Fetched %s online clients so far out of %s", clients_so_far, total_rows)
+
+                if clients_so_far >= total_rows or not page_data:
+                    break
+
+                current_page += 1
+
+            _LOGGER.debug("Finished fetching all %s online clients", len(all_clients))
+            return {
+                "errorCode": 0,
+                "msg": "Success.",
+                "result": {
+                    "totalRows": len(all_clients),
+                    "data": all_clients
+                }
+            }
+
+        except Exception as e:
+            _LOGGER.error("Failed to get online clients: %s", str(e))
+            return []
+
+    def get_clients(self):
+        """Get all clients from Omada Controller."""
+        try:
+            # Get both known and online clients
+            known_clients_response = self.get_known_clients()
+            online_clients_response = self.get_online_clients()
+
+            known_clients = known_clients_response.get("result", {}).get("data", [])
+            online_clients = online_clients_response.get("result", {}).get("data", [])
+
+            # Create a dictionary of known clients with MAC as key
+            known_clients_dict = {client["mac"]: client for client in known_clients}
+
+            # Update known clients with online status and details
+            for online_client in online_clients:
+                mac = online_client.get("mac")
+                if mac in known_clients_dict:
+                    # Update known client with online details
+                    known_clients_dict[mac].update(online_client)
+                    known_clients_dict[mac]["active"] = True
+                else:
+                    # Add new online client to known clients
+                    online_client["active"] = True
+                    known_clients_dict[mac] = online_client
+
+            # Set all clients not in online_clients as inactive
+            online_macs = {client["mac"] for client in online_clients}
+            for mac, client in known_clients_dict.items():
+                if mac not in online_macs:
+                    client["active"] = False
+
+            # Convert back to list
+            all_clients = list(known_clients_dict.values())
+
             return {
                 "errorCode": 0,
                 "msg": "Success.",

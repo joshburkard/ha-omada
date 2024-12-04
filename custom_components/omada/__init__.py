@@ -37,7 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Get basic data first
             tasks = [
                 hass.async_add_executor_job(api.get_devices),
-                hass.async_add_executor_job(api.get_clients),
+                hass.async_add_executor_job(api.get_clients),  # This now gets both known and online clients
                 hass.async_add_executor_job(lambda: api.get_acl_rules(0)),
                 hass.async_add_executor_job(lambda: api.get_acl_rules(1)),
                 hass.async_add_executor_job(lambda: api.get_acl_rules(2)),
@@ -108,7 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Add to new_data dictionary:
             new_data = {
                 "devices": device_data,
-                "clients": clients.get("result", {}).get("data", []),
+                "clients": clients.get("result", {}).get("data", []),  # Now includes both known and online clients
                 "acl_rules": {
                     "gateway": gateway_rules.get("result", {}).get("data", []),
                     "switch": switch_rules.get("result", {}).get("data", []),
@@ -152,11 +152,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict):
+    """Clean up stale entities and devices."""
     device_registry = dr_async_get(hass)
     entity_registry = er_async_get(hass)
 
     # Get current device IDs
     current_device_macs = {device["mac"] for device in data["devices"]}
+    current_client_macs = {client["mac"] for client in data["clients"]}
 
     # Build ACL rules set
     current_acl_rules = set()
@@ -191,44 +193,76 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
 
     # Clean up stale entities
     entities_to_remove = []
+
     for entry in entity_registry.entities.values():
-        if entry.domain == "switch":
-            unique_id = entry.unique_id
-            if unique_id.startswith("device_") and "_ssid_" in unique_id:
-                if unique_id not in current_ssids:
-                    entities_to_remove.append(entry.entity_id)
-            elif unique_id.startswith("acl_rule_"):
-                if unique_id not in current_acl_rules:
-                    entities_to_remove.append(entry.entity_id)
-            elif unique_id.startswith("url_filter_"):
-                if unique_id not in current_url_filters:
-                    entities_to_remove.append(entry.entity_id)
+        if entry.config_entry_id != entry_id:
+            continue
+
+        unique_id = entry.unique_id
+        should_remove = False
+
+        # Check client-related entities
+        if unique_id and (unique_id.startswith("client_") or unique_id.startswith("omada_tracker_")):
+            # Extract MAC address from unique_id
+            # Format could be either "client_XX:XX:XX:XX:XX:XX_*" or "omada_tracker_XX:XX:XX:XX:XX:XX"
+            parts = unique_id.split("_")
+            if len(parts) >= 2:
+                mac = parts[1]
+                if unique_id.startswith("omada_tracker_"):
+                    mac = unique_id.replace("omada_tracker_", "")
+                if mac not in current_client_macs:
+                    should_remove = True
+                    _LOGGER.debug("Marking client entity for removal: %s (MAC: %s)", entry.entity_id, mac)
+
+        # Check device entities
+        elif unique_id and unique_id.startswith("device_"):
+            parts = unique_id.split("_")
+            if len(parts) >= 2:
+                mac = parts[1]
+                if mac not in current_device_macs:
+                    should_remove = True
+
+        # Check ACL rule entities
+        elif unique_id and unique_id.startswith("acl_rule_"):
+            if unique_id not in current_acl_rules:
+                should_remove = True
+
+        # Check URL filter entities
+        elif unique_id and unique_id.startswith("url_filter_"):
+            if unique_id not in current_url_filters:
+                should_remove = True
+
+        # Check SSID override entities
+        elif unique_id and "_ssid_" in unique_id:
+            if unique_id not in current_ssids:
+                should_remove = True
+
+        # Check if entity is unavailable
+        if entry.device_id:
+            device = device_registry.async_get(entry.device_id)
+            if device and not device.disabled:
+                try:
+                    state = hass.states.get(entry.entity_id)
+                    if state and state.state == "unavailable":
+                        should_remove = True
+                        _LOGGER.debug("Marking unavailable entity for removal: %s", entry.entity_id)
+                except Exception as e:
+                    _LOGGER.warning("Error checking entity state: %s", e)
+
+        if should_remove:
+            entities_to_remove.append(entry.entity_id)
 
     # Remove stale entities
     for entity_id in entities_to_remove:
-        _LOGGER.debug("Removing stale entity: %s", entity_id)
+        _LOGGER.info("Removing stale entity: %s", entity_id)
         entity_registry.async_remove(entity_id)
 
-    # Create a list of devices to remove
+    # Clean up devices
     devices_to_remove = []
 
-    # Check client devices for entities
-    client_devices = {device_id: device for device_id, device in list(device_registry.devices.items())
-                     if any(identifier[0] == DOMAIN and identifier[1].startswith("client_")
-                           for identifier in device.identifiers)}
-
-    for device_id, device in client_devices.items():
-        # Get all entities for this device
-        device_entities = [
-            entry.entity_id for entry in entity_registry.entities.values()
-            if entry.device_id == device_id
-        ]
-        if not device_entities:
-            devices_to_remove.append(device_id)
-
-    # Check other devices
-    for device_id, device in list(device_registry.devices.items()):
-        if device_id in client_devices:
+    # Check all devices
+    for device_id, device in device_registry.devices.items():
+        if not any(identifier[0] == DOMAIN for identifier in device.identifiers):
             continue
 
         for identifier in device.identifiers:
@@ -236,20 +270,40 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
                 continue
 
             device_key = identifier[1]
-            if device_key.startswith("device_"):
+            should_remove = False
+
+            if device_key.startswith("client_"):
+                # Extract MAC from client device identifier
+                mac = device_key.replace("client_", "")
+                if mac not in current_client_macs:
+                    should_remove = True
+                    _LOGGER.debug("Marking client device for removal: %s (MAC: %s)", device_id, mac)
+            elif device_key.startswith("device_"):
                 mac = device_key.replace("device_", "")
                 if mac not in current_device_macs:
-                    devices_to_remove.append(device_id)
+                    should_remove = True
             elif device_key.startswith("acl_rule_"):
                 if device_key not in current_acl_rules:
-                    devices_to_remove.append(device_id)
+                    should_remove = True
             elif device_key.startswith("url_filter_"):
                 if device_key not in current_url_filters:
-                    devices_to_remove.append(device_id)
+                    should_remove = True
+
+            # Check if all entities for this device are gone
+            device_entities = [
+                entry.entity_id for entry in entity_registry.entities.values()
+                if entry.device_id == device_id
+            ]
+            if not device_entities:
+                should_remove = True
+
+            if should_remove:
+                devices_to_remove.append(device_id)
+                break
 
     # Remove stale devices
     for device_id in devices_to_remove:
-        _LOGGER.debug("Removing stale device: %s", device_id)
+        _LOGGER.info("Removing stale device: %s", device_id)
         device_registry.async_remove_device(device_id)
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

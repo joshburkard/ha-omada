@@ -74,11 +74,23 @@ class OmadaClientTracker(OmadaCoordinatorEntity, TrackerEntity):
     @property
     def is_connected(self) -> bool:
         """Return true if the client is connected."""
-        return self._is_client_in_data()
+        for client in self.coordinator.data["clients"]:
+            if client["mac"] == self._client["mac"]:
+                # Check if client is in the online clients list (has active property)
+                if "active" in client:
+                    return client["active"]
+                # For backward compatibility, if active property doesn't exist
+                return bool(client.get("status", False))
+        return False
 
     @property
     def ip_address(self) -> str | None:
         """Return the primary ip address."""
+        # Update IP address if client is found in current data
+        for client in self.coordinator.data["clients"]:
+            if client["mac"] == self._client["mac"]:
+                self._last_ip = client.get("ip", self._last_ip)
+                break
         return self._last_ip
 
     @property

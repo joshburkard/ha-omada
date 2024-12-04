@@ -111,6 +111,13 @@ DEVICE_SENSOR_DEFINITIONS = [
     ("OmadaDeviceBasicSensor", "license_status", "licenseStatusStr", "License Status")
 ]
 
+DEVICE_LICENSE_STATUS_MAP = {
+    0: "unActive",
+    1: "Unbind",
+    2: "Expired",
+    3: "Active"
+}
+
 # URL Filter sensor definitions tuple (class_name, entity_id, attribute, display_name)
 URL_FILTER_SENSOR_DEFINITIONS = [
     ("OmadaURLFilterSensor", "policy", "policy", "Policy"),
@@ -567,13 +574,27 @@ class OmadaDeviceBasicSensor(CoordinatorEntity, SensorEntity):
             return SensorStateClass.MEASUREMENT
         return None
 
+    def _format_value(self, value):
+        """Format the value based on attribute type."""
+        if self._attribute == "license_status":
+            try:
+                return DEVICE_LICENSE_STATUS_MAP.get(int(value), f"Unknown ({value})")
+            except (ValueError, TypeError):
+                return f"Unknown ({value})"
+        return value
+
     @property
     def native_value(self):
         """Return the state of the sensor."""
         for device in self.coordinator.data["devices"]:
             if device["mac"] == self._device["mac"]:
                 return device.get(self._attribute)
-        return None
+
+            if device.get("id") == self._device.get("id"):
+                value = device.get(self._attribute)
+                self._last_value = self._format_value(value)
+                return self._last_value
+        return self._last_value
 
     @property
     def available(self) -> bool:
