@@ -1,4 +1,5 @@
 """Sensor platform for Test HA Omada."""
+from homeassistant.helpers.entity import EntityCategory
 from datetime import datetime
 import logging
 from zoneinfo import ZoneInfo
@@ -66,7 +67,6 @@ CLIENT_SENSOR_DEFINITIONS = [
     ("OmadaClientBaseSensor", "ap_name", "apName", "AP Name"),
     ("OmadaClientBaseSensor", "ap_mac", "apMac", "AP Mac"),
     ("OmadaClientBaseSensor", "channel", "channel", "Channel"),
-    ("OmadaClientBaseSensor", "active", "active", "Active"),
     ("OmadaClientSignalSensor", "signal_level", "signalLevel", "Signal Level"),
     ("OmadaClientSignalSensor", "signal_rank", "signalRank", "Signal Rank"),
     ("OmadaClientWifiSensor", "wifi_mode", "wifiMode", "WiFi Mode"),
@@ -539,20 +539,36 @@ class OmadaClientRadioSensor(OmadaClientBaseSensor):
     def __init__(self, coordinator, client, entity_id, attribute, display_name):
         """Initialize the sensor."""
         super().__init__(coordinator, client, entity_id, attribute, display_name)
-        self._attr_entity_category = "diagnostic"  # Add this to indicate it's a diagnostic value
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC  # Fixed: Using proper enum value
 
     @property
     def native_value(self):
         """Return the mapped radio type."""
-        # First try to get current value
         for client in self.coordinator.data["clients"]:
-            if client["mac"] == self._client["mac"]:
+            if standardize_mac(client["mac"]) == self._mac:
                 radio = client.get(self._attribute)
                 self._last_value = RADIO_TYPE_MAP.get(radio, f"Unknown ({radio})")
                 return self._last_value
-
-        # If client not found, return last known value
         return self._last_value
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        client_found = False
+        current_value = None
+        is_active = False
+
+        for client in self.coordinator.data.get("clients", []):
+            if standardize_mac(client["mac"]) == self._mac:
+                client_found = True
+                current_value = client.get(self._attribute)
+                is_active = client.get("active", False)
+                break
+
+        return (client_found and
+                self.coordinator.last_update_success and
+                current_value is not None and
+                is_active)
 
 class OmadaClientTimeSensor(OmadaClientBaseSensor):
     """Sensor for time-related attributes."""
@@ -765,63 +781,53 @@ async def async_setup_entry(
 
         # Add client sensors
         if "clients" in coordinator.data:
-            for client in coordinator.data["clients"]:
+            client_list = coordinator.data["clients"]
+            _LOGGER.debug("Processing %d clients for sensors", len(client_list))
+
+            for client in client_list:
                 client_mac = client.get("mac")
                 if not client_mac:
                     continue
 
                 mac = standardize_mac(client_mac)
                 is_active = client.get("active", False)
+                _LOGGER.debug("Processing client %s (active: %s) for sensors", mac, is_active)
+
+                # Always create these basic sensors
+                basic_sensors = ["mac_address", "ip_address", "active"]
 
                 for class_name, entity_id, attribute, display_name in CLIENT_SENSOR_DEFINITIONS:
                     entity_key = f"client_{mac}_{entity_id}"
 
-                    # Skip creating certain sensors for inactive clients
-                    if not is_active:
-                        # Only create these basic sensors for inactive clients
-                        if entity_id not in ["mac_address", "ip_address", "network_name", "active"]:
-                            continue
+                    # Skip if entity already being tracked
+                    if entity_key in tracked_entities:
+                        continue
 
-                    # Check if entity exists in registry
-                    entity_exists = False
-                    for entity in entity_registry.entities.values():
-                        if entity.unique_id == entity_key:
-                            entity_exists = True
-                            break
+                    # Process based on sensor type
+                    should_create = False
+                    value = client.get(attribute)
 
-                    # Create new entity if it doesn't exist and has valid data
-                    if not entity_exists and entity_key not in tracked_entities:
-                        value = client.get(attribute)
+                    if entity_id in basic_sensors:
+                        # Always create basic sensors
+                        should_create = True
+                    elif is_active:
+                        # Create other sensors only for active clients with valid data
+                        if class_name in ["OmadaClientWifiSensor", "OmadaClientRadioSensor"]:
+                            should_create = value is not None
+                        elif class_name in ["OmadaClientSignalSensor", "OmadaClientSpeedSensor", "OmadaClientTrafficSensor"]:
+                            should_create = value is not None and not (isinstance(value, (int, float)) and value == 0)
+                        else:
+                            should_create = value is not None
 
-                        # Skip if no valid value
-                        if not is_valid_value(value):
-                            continue
-
-                        # Special handling for specific sensor types
-                        if class_name == "OmadaClientWifiSensor":
-                            if not WIFI_MODE_MAP.get(value):
-                                continue
-                        elif class_name == "OmadaClientRadioSensor":
-                            if not RADIO_TYPE_MAP.get(value):
-                                continue
-                        elif class_name == "OmadaClientTrafficSensor":
-                            if not value or value == 0:
-                                continue
-                        elif class_name == "OmadaClientSignalSensor":
-                            if not isinstance(value, (int, float)) or value == 0:
-                                continue
-                        elif class_name == "OmadaClientSpeedSensor":
-                            if not isinstance(value, (int, float)) or value == 0:
-                                continue
-
-                        sensor_class = globals()[class_name]
-                        entity = sensor_class(coordinator, client, entity_id, attribute, display_name)
-                        tracked_entities[entity_key] = entity
-                        new_entities.append(entity)
-                        _LOGGER.debug(
-                            "Creating new sensor %s for client %s (active: %s)",
-                            entity_key, mac, is_active
-                        )
+                    if should_create:
+                        try:
+                            sensor_class = globals()[class_name]
+                            entity = sensor_class(coordinator, client, entity_id, attribute, display_name)
+                            tracked_entities[entity_key] = entity
+                            new_entities.append(entity)
+                            _LOGGER.debug("Created new sensor %s for client %s", entity_key, mac)
+                        except Exception as e:
+                            _LOGGER.error("Error creating sensor %s for client %s: %s", entity_key, mac, str(e))
 
         # Add ACL rule sensors
         if "acl_rules" in coordinator.data:

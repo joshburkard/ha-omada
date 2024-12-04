@@ -25,14 +25,54 @@ class OmadaAPI:
         self.omada_id = None
         self.token = None
         self.site_id = None
-        self.session = requests.Session()
+        self.session = None
+        self._create_session()
 
-        if skip_cert_verify:
+    def _create_session(self):
+        """Create a new session with proper connection pool settings."""
+        if self.session:
+            try:
+                self.session.close()
+            except Exception:
+                pass
+
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=20,
+            pool_maxsize=20,
+            max_retries=3,
+            pool_block=False
+        )
+        self.session = requests.Session()
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
+        if self.skip_cert_verify:
             requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
             self.session.verify = False
 
+        # Reset authentication state
+        self.token = None
+        self.omada_id = None
+        self.site_id = None
+
+    def disconnect(self):
+        """Close the session."""
+        if self.session:
+            try:
+                self.session.close()
+            except Exception as e:
+                _LOGGER.debug("Error closing session: %s", str(e))
+            self.session = None
+        self.token = None
+        self.omada_id = None
+        self.site_id = None
+
     def authenticate(self):
         """Authenticate with the Omada Controller."""
+        # Reset session if needed
+        if not self.session:
+            self._create_session()
+
         try:
             # Get Omada ID
             _LOGGER.debug("Getting Omada ID from %s", f"{self.base_url}/api/info")

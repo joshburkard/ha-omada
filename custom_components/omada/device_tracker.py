@@ -29,6 +29,7 @@ async def async_setup_entry(
     def async_add_clients():
         """Add new clients."""
         new_clients = []
+        _LOGGER.debug("Processing clients for device trackers")
 
         for client in coordinator.data["clients"]:
             mac = client.get("mac")
@@ -39,21 +40,17 @@ async def async_setup_entry(
             mac = standardize_mac(mac)
             tracker_id = f"{config_entry.entry_id}_tracker_{mac}"
 
-            # Check if entity exists in registry
-            tracker_exists = False
-            for entity in entity_registry.entities.values():
-                if entity.unique_id == tracker_id:
-                    tracker_exists = True
-                    break
-
-            if not tracker_exists and tracker_id not in _TRACKERS:
+            # Only create if not already tracked
+            if tracker_id not in _TRACKERS:
                 tracker = OmadaClientTracker(coordinator, client, config_entry.entry_id)
                 _TRACKERS[tracker_id] = tracker
                 new_clients.append(tracker)
                 _LOGGER.debug("Creating new device tracker %s for client %s", tracker_id, mac)
 
         if new_clients:
+            _LOGGER.info("Adding %d new device trackers", len(new_clients))
             async_add_entities(new_clients)
+
 
     coordinator.async_add_listener(async_add_clients)
     async_add_clients()

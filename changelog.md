@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.2.00034 | 04/12/2024 | better connection session handling |
 | 0.2.00033 | 04/12/2024 | fixed issue with missing state classes and missing entity units |
 | 0.2.00032 | 04/12/2024 | fixed issue were device trackers were created with duplicate name |
 | 0.2.00031 | 04/12/2024 | fixed issue were previous offline clients didn't received all sensors |

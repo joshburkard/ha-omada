@@ -489,7 +489,6 @@ class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
         self._api = api
         self._client = client
         self._mac = standardize_mac(client['mac'])
-        self._client_mac = self._mac  # Add this for compatibility
         client_name = client.get('name', self._mac)
 
         self._attr_name = f"{client_name} Blocked"
@@ -504,6 +503,15 @@ class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
             "sw_version": client.get("os", "Unknown"),
             "connections": {("mac", self._mac)}
         }
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        # Always available if client is in the known clients list
+        return any(
+            standardize_mac(client["mac"]) == self._mac
+            for client in self.coordinator.data["clients"]
+        )
 
     @property
     def is_on(self) -> bool:
