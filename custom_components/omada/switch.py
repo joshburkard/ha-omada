@@ -29,6 +29,24 @@ async def async_setup_entry(
         """Add new switches."""
         new_switches = []
 
+        # Add Client Block switches
+        if "clients" in coordinator.data:
+            for client in coordinator.data["clients"]:
+                client_mac = client.get("mac")
+                if not client_mac:
+                    continue
+
+                switch_id = f"client_{client_mac}_blocked"
+                if switch_id not in _SWITCHES:
+                    _LOGGER.debug("Adding new client block switch: %s", switch_id)
+                    switch = OmadaClientBlockSwitch(
+                        coordinator,
+                        api,
+                        client
+                    )
+                    _SWITCHES[switch_id] = switch
+                    new_switches.append(switch)
+
         # Add ACL Rule switches
         for device_type in ["gateway", "switch", "eap"]:
             if device_type in coordinator.data.get("acl_rules", {}):
@@ -390,7 +408,6 @@ class OmadaRadioSwitch(OmadaCoordinatorEntity, SwitchEntity):
 
         self._attr_name = f"{device_name} {radio_name}"
         self._attr_unique_id = f"device_{self._device_mac}_radio_{radio_type}"
-        self._attr_icon = "mdi:antenna"
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"device_{self._device_mac}")},
@@ -451,4 +468,71 @@ class OmadaRadioSwitch(OmadaCoordinatorEntity, SwitchEntity):
 
         except Exception as error:
             _LOGGER.error("Error occurred while updating radio status: %s", str(error))
+            raise
+
+class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
+    """Switch to control client blocking status."""
+
+    def __init__(self, coordinator, api, client):
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._api = api
+        self._client = client
+        self._client_mac = client.get("mac")
+        client_name = client.get("name", self._client_mac)
+
+        self._attr_name = f"{client_name} Blocked"
+        self._attr_unique_id = f"client_{self._client_mac}_blocked"
+        self._attr_icon = "mdi:wifi-off"
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"client_{self._client_mac}")},
+            "name": client_name,
+            "manufacturer": client.get("manufacturer", "TP-Link"),
+            "model": "Omada Client",
+            "sw_version": client.get("os", "Unknown"),
+        }
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if client is blocked."""
+        for client in self.coordinator.data["clients"]:
+            if client["mac"] == self._client_mac:
+                return client.get("block", False)
+        return False
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Block the client."""
+        try:
+            success = await self.hass.async_add_executor_job(
+                self._api.block_client,
+                self._client_mac
+            )
+
+            if success:
+                # Force a coordinator update to get the new state
+                await self.coordinator.async_request_refresh()
+            else:
+                _LOGGER.error("Failed to block client %s", self._client_mac)
+
+        except Exception as error:
+            _LOGGER.error("Error blocking client %s: %s", self._client_mac, str(error))
+            raise
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Unblock the client."""
+        try:
+            success = await self.hass.async_add_executor_job(
+                self._api.unblock_client,
+                self._client_mac
+            )
+
+            if success:
+                # Force a coordinator update to get the new state
+                await self.coordinator.async_request_refresh()
+            else:
+                _LOGGER.error("Failed to unblock client %s", self._client_mac)
+
+        except Exception as error:
+            _LOGGER.error("Error unblocking client %s: %s", self._client_mac, str(error))
             raise

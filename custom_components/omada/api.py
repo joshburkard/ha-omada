@@ -548,3 +548,39 @@ class OmadaAPI:
         except Exception as e:
             _LOGGER.error("Failed to update SSID overrides for device %s: %s", device_mac, str(e))
             return False
+
+    def block_client(self, mac: str) -> bool:
+        """Block a client by MAC address."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/cmd/clients/{mac}/block"
+            _LOGGER.debug("Blocking client at %s", url)
+
+            response = self._make_request("POST", url)
+            success = response.get("errorCode", -1) == 0
+
+            if not success:
+                _LOGGER.error("Failed to block client %s: %s", mac, response.get("msg", "Unknown error"))
+
+            return success
+
+        except Exception as e:
+            _LOGGER.error("Failed to block client %s: %s", mac, str(e))
+            return False
+
+    def unblock_client(self, mac: str) -> bool:
+        """Unblock a client by MAC address."""
+        try:
+            url = f"{self.base_url}/{self.omada_id}/api/v2/sites/{self.site_id}/cmd/clients/{mac}/unblock"
+            _LOGGER.debug("Unblocking client at %s", url)
+
+            response = self._make_request("POST", url)
+            success = response.get("errorCode", -1) == 0
+
+            if not success:
+                _LOGGER.error("Failed to unblock client %s: %s", mac, response.get("msg", "Unknown error"))
+
+            return success
+
+        except Exception as e:
+            _LOGGER.error("Failed to unblock client %s: %s", mac, str(e))
+            return False
