@@ -23,6 +23,7 @@ DEVICE_SENSOR_DEFINITIONS = [
     ("locate_enable", "locateEnable", "Locate Enable"),
     ("need_upgrade", "needUpgrade", "Need Upgrade"),
     ("status_category", "statusCategory", "Status Category"),
+    ("wireless_linked", "wirelessLinked", "WireLess Linked")
 ]
 
 async def async_setup_entry(

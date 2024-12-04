@@ -390,6 +390,7 @@ class OmadaRadioSwitch(OmadaCoordinatorEntity, SwitchEntity):
 
         self._attr_name = f"{device_name} {radio_name}"
         self._attr_unique_id = f"device_{self._device_mac}_radio_{radio_type}"
+        self._attr_icon = "mdi:antenna"
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"device_{self._device_mac}")},
