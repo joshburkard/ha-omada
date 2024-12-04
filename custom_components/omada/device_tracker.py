@@ -6,9 +6,12 @@ from homeassistant.components.device_tracker.const import ATTR_SOURCE_TYPE, DOMA
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_registry import async_get as er_async_get
 
 from .helpers import OmadaCoordinatorEntity
 from .const import DOMAIN
+
+from typing import Any
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -18,6 +21,7 @@ async def async_setup_entry(
     """Set up device tracker for Omada Clients."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     tracked_clients = {}
+    entity_registry = er_async_get(hass)
 
     @callback
     def async_add_clients():
@@ -26,12 +30,23 @@ async def async_setup_entry(
 
         for client in coordinator.data["clients"]:
             mac = client.get("mac")
-            if not mac or mac in tracked_clients:
+            if not mac:
                 continue
 
-            tracker = OmadaClientTracker(coordinator, client)
-            tracked_clients[mac] = tracker
-            new_clients.append(tracker)
+            if mac not in tracked_clients:
+                tracker = OmadaClientTracker(coordinator, client)
+                tracked_clients[mac] = tracker
+                new_clients.append(tracker)
+            else:
+                # Client exists but might be coming back online - ensure entities exist
+                if client.get("active", False):
+                    # Check if entity was previously removed
+                    entity_id = f"device_tracker.{tracked_clients[mac].name}".lower().replace(" ", "_")
+                    if not entity_registry.async_get(entity_id):
+                        # Re-add the tracker if it doesn't exist
+                        tracker = OmadaClientTracker(coordinator, client)
+                        tracked_clients[mac] = tracker
+                        new_clients.append(tracker)
 
         if new_clients:
             async_add_entities(new_clients)

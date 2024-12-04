@@ -693,6 +693,7 @@ async def async_setup_entry(
     """Set up the sensors."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     tracked_entities = {}
+    entity_registry = er_async_get(hass)
 
     @callback
     def add_entities():
@@ -727,27 +728,36 @@ async def async_setup_entry(
                 if not client_mac:
                     continue
 
-                for class_name, entity_id, attribute, display_name in CLIENT_SENSOR_DEFINITIONS:
-                    entity_key = f"client_{client_mac}_{entity_id}"
-                    if entity_key in tracked_entities:
-                        continue
+                # Only process active clients for detailed sensors
+                if client.get("active", False):
+                    for class_name, entity_id, attribute, display_name in CLIENT_SENSOR_DEFINITIONS:
+                        entity_key = f"client_{client_mac}_{entity_id}"
 
-                    value = client.get(attribute)
-                    if class_name == "OmadaClientWifiSensor":
-                        mapped_value = WIFI_MODE_MAP.get(value)
-                        if not mapped_value:
-                            continue
-                    elif class_name == "OmadaClientRadioSensor":
-                        mapped_value = RADIO_TYPE_MAP.get(value)
-                        if not mapped_value:
-                            continue
-                    elif not is_valid_value(value):
-                        continue
+                        # Check if entity exists in registry
+                        entity_exists = False
+                        for entity in entity_registry.entities.values():
+                            if entity.unique_id == entity_key:
+                                entity_exists = True
+                                break
 
-                    sensor_class = globals()[class_name]
-                    entity = sensor_class(coordinator, client, entity_id, attribute, display_name)
-                    tracked_entities[entity_key] = entity
-                    new_entities.append(entity)
+                        # Create new entity if it doesn't exist or was previously removed
+                        if not entity_exists and entity_key not in tracked_entities:
+                            value = client.get(attribute)
+                            if class_name == "OmadaClientWifiSensor":
+                                mapped_value = WIFI_MODE_MAP.get(value)
+                                if not mapped_value:
+                                    continue
+                            elif class_name == "OmadaClientRadioSensor":
+                                mapped_value = RADIO_TYPE_MAP.get(value)
+                                if not mapped_value:
+                                    continue
+                            elif not is_valid_value(value):
+                                continue
+
+                            sensor_class = globals()[class_name]
+                            entity = sensor_class(coordinator, client, entity_id, attribute, display_name)
+                            tracked_entities[entity_key] = entity
+                            new_entities.append(entity)
 
         # Add ACL rule sensors
         if "acl_rules" in coordinator.data:

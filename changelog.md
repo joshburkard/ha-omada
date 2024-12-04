@@ -2,6 +2,7 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.2.00031 | 04/12/2024 | fixed issue were previous offline clients didn't received all sensors |
 | 0.2.00030 | 04/12/2024 | added `Blocked` switch to clients |
 | 0.2.00029 | 04/12/2024 | restructured client handling to fetch known and online clients |
 | 0.2.00028 | 04/12/2024 | added sensor WireLess Linked on devices |
