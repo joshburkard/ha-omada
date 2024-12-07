@@ -2,6 +2,14 @@
 
 | Version | Date | Description |
 | --- | --- | --- |
+| 0.2.00035 | 04/12/2024 | handling of offline clients |
+| 0.2.00034 | 04/12/2024 | better connection session handling |
+| 0.2.00033 | 04/12/2024 | fixed issue with missing state classes and missing entity units |
+| 0.2.00032 | 04/12/2024 | fixed issue were device trackers were created with duplicate name |
+| 0.2.00031 | 04/12/2024 | fixed issue were previous offline clients didn't received all sensors |
+| 0.2.00030 | 04/12/2024 | added `Blocked` switch to clients |
+| 0.2.00029 | 04/12/2024 | restructured client handling to fetch known and online clients |
+| 0.2.00028 | 04/12/2024 | added sensor WireLess Linked on devices |
 | 0.2.00027 | 29/11/2024 | added led setting on devices |
 | 0.2.00026 | 29/11/2024 | added switches for 2.4 GHz and 5GHz radio on devices |
 | 0.2.00025 | 29/11/2024 | cleanup clients without entities |

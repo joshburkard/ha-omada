@@ -10,7 +10,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 from .const import DOMAIN
-from .helpers import OmadaCoordinatorEntity, is_valid_value
+from .helpers import OmadaCoordinatorEntity, standardize_mac, is_valid_value
+from homeassistant.helpers.entity_registry import RegistryEntryDisabler
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ DEVICE_SENSOR_DEFINITIONS = [
     ("locate_enable", "locateEnable", "Locate Enable"),
     ("need_upgrade", "needUpgrade", "Need Upgrade"),
     ("status_category", "statusCategory", "Status Category"),
+    ("wireless_linked", "wirelessLinked", "WireLess Linked")
 ]
 
 async def async_setup_entry(

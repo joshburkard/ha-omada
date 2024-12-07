@@ -9,106 +9,132 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.entity_registry import async_get as er_async_get
 from homeassistant.helpers.device_registry import async_get as dr_async_get
+from homeassistant.helpers.entity_registry import RegistryEntryDisabler
 
 from .api import OmadaAPI
 from .const import DOMAIN, DEFAULT_SCAN_INTERVAL
+from .helpers import standardize_mac
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.DEVICE_TRACKER, Platform.SWITCH, Platform.SELECT]
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the Omada component."""
     hass.data.setdefault(DOMAIN, {})
     return True
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    api = OmadaAPI(
-        base_url=entry.data["url"],
-        username=entry.data["username"],
-        password=entry.data["password"],
-        site_name=entry.data["site_name"],
-        skip_cert_verify=entry.data.get("skip_cert_verify", False)
-    )
+class OmadaDataUpdateCoordinator(DataUpdateCoordinator):
+    """Class to manage fetching Omada data."""
 
-    async def async_update_data():
+    def __init__(self, hass, api, entry_id):
+        """Initialize the coordinator."""
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=DEFAULT_SCAN_INTERVAL,
+        )
+        self.api = api
+        self.config_entry_id = entry_id
+        self.hass = hass
+        self._last_known_data = None
+        self._error_count = 0
+        self.tracked_entities = {
+            "sensor": {},
+            "switch": {},
+            "binary_sensor": {},
+            "device_tracker": {},
+            "select": {}
+        }
+
+    async def _async_update_data(self):
+        """Fetch data from API."""
         try:
-            await hass.async_add_executor_job(api.authenticate)
+            if not self.api.token:
+                await self.hass.async_add_executor_job(self.api.authenticate)
 
-            # Get basic data first
-            tasks = [
-                hass.async_add_executor_job(api.get_devices),
-                hass.async_add_executor_job(api.get_clients),
-                hass.async_add_executor_job(lambda: api.get_acl_rules(0)),
-                hass.async_add_executor_job(lambda: api.get_acl_rules(1)),
-                hass.async_add_executor_job(lambda: api.get_acl_rules(2)),
-                hass.async_add_executor_job(api.get_networks),
-                hass.async_add_executor_job(api.get_ip_groups),
-                hass.async_add_executor_job(api.get_all_ssids),
-                hass.async_add_executor_job(lambda: api.get_url_filters("gateway")),
-                hass.async_add_executor_job(lambda: api.get_url_filters("ap"))
-            ]
+            # Get devices
+            device_data = await self.hass.async_add_executor_job(self.api.get_devices)
+            device_data = device_data.get("result", {}).get("data", [])
 
-            results = await asyncio.gather(*tasks)
-            devices, clients, gateway_rules, switch_rules, eap_rules, networks, ip_groups, ssids, gateway_url_filters, eap_url_filters = results
+            # Get and process clients
+            clients_dict = {}
+            known_clients_response = await self.hass.async_add_executor_job(self.api.get_known_clients)
+            online_clients_response = await self.hass.async_add_executor_job(self.api.get_online_clients)
 
-            # Get SSID overrides for EAP devices
-            ssid_override_tasks = []
-            device_macs = []
-            device_data = devices.get("result", {}).get("data", [])
+            # Process known clients
+            for client in known_clients_response.get("result", {}).get("data", []):
+                mac = standardize_mac(client.get("mac", ""))
+                if mac:
+                    clients_dict[mac] = dict(client)
+                    clients_dict[mac]["active"] = False
 
-            _LOGGER.debug("Processing devices for SSID overrides")
-            for device in device_data:
-                if device.get("type") == "ap":
-                    mac = device.get("mac")
-                    _LOGGER.debug("Found EAP device: %s", mac)
-                    device_macs.append(mac)
-                    ssid_override_tasks.append(
-                        hass.async_add_executor_job(
-                            api.get_device_ssid_overrides,
-                            mac
-                        )
-                    )
+            # Process online clients
+            for client in online_clients_response.get("result", {}).get("data", []):
+                mac = standardize_mac(client.get("mac", ""))
+                if not mac:
+                    continue
 
-            if ssid_override_tasks:
-                _LOGGER.debug("Fetching SSID overrides for %d devices", len(ssid_override_tasks))
-                ssid_override_results = await asyncio.gather(*ssid_override_tasks)
-                ssid_overrides = dict(zip(device_macs, ssid_override_results))
-                _LOGGER.debug("SSID overrides data: %s", ssid_overrides)
-            else:
-                _LOGGER.debug("No EAP devices found for SSID overrides")
-                ssid_overrides = {}
+                if mac in clients_dict:
+                    clients_dict[mac].update(dict(client))
+                else:
+                    clients_dict[mac] = dict(client)
+                clients_dict[mac]["active"] = True
 
-            # Get AP radio settings
-            ap_radio_settings = {}
-            for device in device_data:
-                if device.get("type") == "ap":
-                    mac = device.get("mac")
-                    if mac:
-                        settings = await hass.async_add_executor_job(
-                            api.get_device_ssid_overrides,  # This function already gets all device settings
-                            mac
-                        )
-                        ap_radio_settings[mac] = settings
+            all_clients = list(clients_dict.values())
 
-            # Get AP device data (including radio settings)
+            # Get rules and settings
+            results = await asyncio.gather(
+                self.hass.async_add_executor_job(lambda: self.api.get_acl_rules(0)),
+                self.hass.async_add_executor_job(lambda: self.api.get_acl_rules(1)),
+                self.hass.async_add_executor_job(lambda: self.api.get_acl_rules(2)),
+                self.hass.async_add_executor_job(self.api.get_networks),
+                self.hass.async_add_executor_job(self.api.get_ip_groups),
+                self.hass.async_add_executor_job(self.api.get_all_ssids),
+                self.hass.async_add_executor_job(lambda: self.api.get_url_filters("gateway")),
+                self.hass.async_add_executor_job(lambda: self.api.get_url_filters("ap"))
+            )
+
+            gateway_rules, switch_rules, eap_rules, networks, ip_groups, ssids, gateway_url_filters, eap_url_filters = results
+
+            # Process AP devices data
+            ssid_overrides = {}
             ap_data = {}
-            for device in device_data:
-                if device.get("type") == "ap":
-                    mac = device.get("mac")
-                    if mac:
-                        _LOGGER.debug("Getting radio settings for AP %s", mac)
-                        settings = await hass.async_add_executor_job(
-                            api.get_device_radio,
+
+            # Create a list of AP devices
+            ap_devices = [device for device in device_data if device.get("type") == "ap"]
+
+            # Then process each AP device
+            for device in ap_devices:
+                mac = device.get("mac")
+                if mac:
+                    try:
+                        # Get radio settings
+                        radio_result = await self.hass.async_add_executor_job(
+                            self.api.get_device_radio,
                             mac
                         )
-                        _LOGGER.debug("Radio settings response for %s: %s", mac, settings)
-                        ap_data[mac] = settings
-            _LOGGER.debug("Collected AP data: %s", ap_data)
+                        if radio_result:
+                            ap_data[mac] = radio_result
 
-            # Add to new_data dictionary:
+                        # Get SSID overrides
+                        override_result = await self.hass.async_add_executor_job(
+                            self.api.get_device_ssid_overrides,
+                            mac
+                        )
+                        if override_result:
+                            ssid_overrides[mac] = override_result
+
+                    except Exception as e:
+                        _LOGGER.error("Error getting AP device data for %s: %s", mac, str(e))
+                        if self._last_known_data:
+                            ap_data[mac] = self._last_known_data["ap_data"].get(mac, {})
+                            ssid_overrides[mac] = self._last_known_data["ssid_overrides"].get(mac, {})
+
             new_data = {
                 "devices": device_data,
-                "clients": clients.get("result", {}).get("data", []),
+                "clients": all_clients,
                 "acl_rules": {
                     "gateway": gateway_rules.get("result", {}).get("data", []),
                     "switch": switch_rules.get("result", {}).get("data", []),
@@ -122,25 +148,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "ap": eap_url_filters.get("result", {}).get("data", [])
                 },
                 "ssid_overrides": ssid_overrides,
-                "ap_radio_settings": ap_radio_settings,
                 "ap_data": ap_data
             }
 
-            _LOGGER.debug("Final coordinator data structure: %s", new_data.keys())
-            await cleanup_stale_entities(hass, entry.entry_id, new_data)
+            # Update was successful
+            self._error_count = 0
+            self._last_known_data = new_data
+
+            # Clean up stale entities
+            await cleanup_stale_entities(self.hass, self.config_entry_id, new_data)
+
             return new_data
 
         except Exception as err:
+            self._error_count += 1
+            _LOGGER.error("Error fetching omada data: %s", str(err))
+
+            if self._error_count >= 3:
+                raise UpdateFailed(f"Error communicating with API: {err}")
+
+            if self._last_known_data:
+                return self._last_known_data
+
             raise UpdateFailed(f"Error communicating with API: {err}")
 
-    coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name=DOMAIN,
-        update_method=async_update_data,
-        update_interval=DEFAULT_SCAN_INTERVAL,
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Omada from a config entry."""
+    api = OmadaAPI(
+        base_url=entry.data["url"],
+        username=entry.data["username"],
+        password=entry.data["password"],
+        site_name=entry.data["site_name"],
+        skip_cert_verify=entry.data.get("skip_cert_verify", False)
     )
 
+    try:
+        authenticated = await hass.async_add_executor_job(api.authenticate)
+        if not authenticated:
+            _LOGGER.error("Failed to authenticate with Omada Controller")
+            return False
+    except Exception as err:
+        _LOGGER.error("Error authenticating with Omada Controller: %s", err)
+        return False
+
+    coordinator = OmadaDataUpdateCoordinator(hass, api, entry.entry_id)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = {
@@ -151,12 +202,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+    if unload_ok:
+        api = hass.data[DOMAIN][entry.entry_id]["api"]
+        await hass.async_add_executor_job(api.disconnect)
+        hass.data[DOMAIN].pop(entry.entry_id)
+
+    return unload_ok
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload config entry."""
+    _LOGGER.debug("Reloading Omada integration")
+
+    # Ensure clean disconnect of existing API
+    if entry.entry_id in hass.data.get(DOMAIN, {}):
+        try:
+            api = hass.data[DOMAIN][entry.entry_id]["api"]
+            await hass.async_add_executor_job(api.disconnect)
+        except Exception as err:
+            _LOGGER.error("Error disconnecting API during reload: %s", str(err))
+
+    await async_unload_entry(hass, entry)
+    await async_setup_entry(hass, entry)
+
 async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict):
+    """Clean up stale entities."""
     device_registry = dr_async_get(hass)
     entity_registry = er_async_get(hass)
 
-    # Get current device IDs
-    current_device_macs = {device["mac"] for device in data["devices"]}
+    # Get current IDs
+    current_device_macs = {standardize_mac(device["mac"]) for device in data["devices"]}
+    current_client_macs = {standardize_mac(client["mac"]) for client in data["clients"]}
 
     # Build ACL rules set
     current_acl_rules = set()
@@ -189,71 +268,76 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
                 switch_id = f"device_{device_mac}_ssid_{ssid_name}"
                 current_ssids.add(switch_id)
 
-    # Clean up stale entities
     entities_to_remove = []
-    for entry in entity_registry.entities.values():
-        if entry.domain == "switch":
-            unique_id = entry.unique_id
-            if unique_id.startswith("device_") and "_ssid_" in unique_id:
-                if unique_id not in current_ssids:
-                    entities_to_remove.append(entry.entity_id)
-            elif unique_id.startswith("acl_rule_"):
-                if unique_id not in current_acl_rules:
-                    entities_to_remove.append(entry.entity_id)
-            elif unique_id.startswith("url_filter_"):
-                if unique_id not in current_url_filters:
-                    entities_to_remove.append(entry.entity_id)
+
+    for entity in entity_registry.entities.values():
+        if entity.config_entry_id != entry_id:
+            continue
+
+        unique_id = entity.unique_id
+        if not unique_id:
+            continue
+
+        should_remove = False
+
+        # Handle client-related entities
+        if unique_id.startswith("client_"):
+            mac = standardize_mac(unique_id.split("_")[1])
+            if mac not in current_client_macs:
+                _LOGGER.info("Removing entity for non-existent client: %s", entity.entity_id)
+                should_remove = True
+        # Handle device trackers separately
+        elif unique_id.startswith(f"{entry_id}_tracker_"):
+            mac = standardize_mac(unique_id.replace(f"{entry_id}_tracker_", ""))
+            if mac not in current_client_macs:
+                _LOGGER.info("Removing tracker for non-existent client: %s", entity.entity_id)
+                should_remove = True
+
+        # Handle device entities
+        elif unique_id.startswith("device_"):
+            mac = standardize_mac(unique_id.split("_")[1])
+            if mac not in current_device_macs:
+                should_remove = True
+
+        # Handle ACL rule entities
+        elif unique_id.startswith("acl_rule_"):
+            if unique_id not in current_acl_rules:
+                should_remove = True
+
+        # Handle URL filter entities
+        elif unique_id.startswith("url_filter_"):
+            if unique_id not in current_url_filters:
+                should_remove = True
+
+        # Handle SSID override entities
+        elif "_ssid_" in unique_id:
+            if unique_id not in current_ssids:
+                should_remove = True
+
+        if should_remove:
+            entities_to_remove.append(entity.entity_id)
 
     # Remove stale entities
     for entity_id in entities_to_remove:
-        _LOGGER.debug("Removing stale entity: %s", entity_id)
+        _LOGGER.info("Removing entity: %s", entity_id)
         entity_registry.async_remove(entity_id)
 
-    # Create a list of devices to remove
+    # Clean up devices without entities
     devices_to_remove = []
-
-    # Check client devices for entities
-    client_devices = {device_id: device for device_id, device in list(device_registry.devices.items())
-                     if any(identifier[0] == DOMAIN and identifier[1].startswith("client_")
-                           for identifier in device.identifiers)}
-
-    for device_id, device in client_devices.items():
-        # Get all entities for this device
-        device_entities = [
-            entry.entity_id for entry in entity_registry.entities.values()
-            if entry.device_id == device_id
-        ]
-        if not device_entities:
-            devices_to_remove.append(device_id)
-
-    # Check other devices
-    for device_id, device in list(device_registry.devices.items()):
-        if device_id in client_devices:
+    for device_id, device in device_registry.devices.items():
+        if not any(identifier[0] == DOMAIN for identifier in device.identifiers):
             continue
 
-        for identifier in device.identifiers:
-            if identifier[0] != DOMAIN:
-                continue
+        has_entities = False
+        for entity in entity_registry.entities.values():
+            if entity.device_id == device_id and entity.entity_id not in entities_to_remove:
+                has_entities = True
+                break
 
-            device_key = identifier[1]
-            if device_key.startswith("device_"):
-                mac = device_key.replace("device_", "")
-                if mac not in current_device_macs:
-                    devices_to_remove.append(device_id)
-            elif device_key.startswith("acl_rule_"):
-                if device_key not in current_acl_rules:
-                    devices_to_remove.append(device_id)
-            elif device_key.startswith("url_filter_"):
-                if device_key not in current_url_filters:
-                    devices_to_remove.append(device_id)
+        if not has_entities:
+            devices_to_remove.append(device_id)
 
     # Remove stale devices
     for device_id in devices_to_remove:
-        _LOGGER.debug("Removing stale device: %s", device_id)
+        _LOGGER.info("Removing device without entities: %s", device_id)
         device_registry.async_remove_device(device_id)
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-    return unload_ok

@@ -7,13 +7,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.select import SelectEntity
+from homeassistant.helpers.entity_registry import async_get as er_async_get
+from homeassistant.helpers.entity_registry import RegistryEntryDisabler
 
-from .helpers import OmadaCoordinatorEntity
+from .helpers import OmadaCoordinatorEntity, standardize_mac
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
-
-_SWITCHES = {}  # Store switches globally to persist between updates
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -23,11 +23,31 @@ async def async_setup_entry(
     """Set up switches."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     api = hass.data[DOMAIN][config_entry.entry_id]["api"]
+    entity_registry = er_async_get(hass)
 
     @callback
     def async_add_switches():
         """Add new switches."""
         new_switches = []
+        tracked_entities = coordinator.tracked_entities["switch"]
+
+        # Add Client Block switches
+        if "clients" in coordinator.data:
+            for client in coordinator.data["clients"]:
+                client_mac = client.get("mac")
+                if not client_mac:
+                    continue
+
+                switch_id = f"client_{client_mac}_blocked"
+                if switch_id not in tracked_entities:
+                    _LOGGER.debug("Adding new client block switch: %s", switch_id)
+                    switch = OmadaClientBlockSwitch(
+                        coordinator,
+                        api,
+                        client
+                    )
+                    tracked_entities[switch_id] = switch
+                    new_switches.append(switch)
 
         # Add ACL Rule switches
         for device_type in ["gateway", "switch", "eap"]:
@@ -38,17 +58,16 @@ async def async_setup_entry(
                         continue
 
                     identifier = f"{device_type}_{rule_id}"
-                    if identifier not in _SWITCHES:
+                    if identifier not in tracked_entities:
                         _LOGGER.debug("Adding new ACL rule switch: %s", identifier)
                         rule_name = rule.get("name", rule_id)
                         if device_type == 'gateway':
                             device_name = f"Omada Gateway ACL Rule - {rule_name}"
-                        if device_type == 'switch':
+                        elif device_type == 'switch':
                             device_name = f"Omada Switch ACL Rule - {rule_name}"
                         else:
                             device_name = f"Omada EAP ACL Rule - {rule_name}"
 
-                        # device_name = f"Omada ACL {device_type.capitalize()} Rule - {rule_name}"
                         switch = OmadaACLRuleSwitch(
                             coordinator,
                             api,
@@ -56,7 +75,7 @@ async def async_setup_entry(
                             device_type,
                             device_name
                         )
-                        _SWITCHES[identifier] = switch
+                        tracked_entities[identifier] = switch
                         new_switches.append(switch)
 
         # Add URL Filter switches
@@ -68,7 +87,7 @@ async def async_setup_entry(
                         continue
 
                     identifier = f"{filter_type}_url_{rule_id}"
-                    if identifier not in _SWITCHES:
+                    if identifier not in tracked_entities:
                         _LOGGER.debug("Adding new URL filter switch: %s", identifier)
                         rule_name = rule.get("name", rule_id)
                         device_name = f"Omada {'Gateway' if filter_type == 'gateway' else 'EAP'} URL Filter - {rule_name}"
@@ -79,7 +98,7 @@ async def async_setup_entry(
                             filter_type,
                             device_name
                         )
-                        _SWITCHES[identifier] = switch
+                        tracked_entities[identifier] = switch
                         new_switches.append(switch)
 
         # Add SSID Override switches
@@ -95,7 +114,7 @@ async def async_setup_entry(
                             continue
 
                         switch_id = f"device_{device_mac}_ssid_{ssid_name}"
-                        if switch_id not in _SWITCHES:
+                        if switch_id not in tracked_entities:
                             _LOGGER.debug("Adding new SSID override switch: %s", switch_id)
                             switch = OmadaSSIDOverrideSwitch(
                                 coordinator,
@@ -103,7 +122,7 @@ async def async_setup_entry(
                                 device,
                                 ssid_name
                             )
-                            _SWITCHES[switch_id] = switch
+                            tracked_entities[switch_id] = switch
                             new_switches.append(switch)
 
         # Add Radio switches for AP devices
@@ -114,14 +133,14 @@ async def async_setup_entry(
 
                     for radio_type in ["2g", "5g"]:
                         switch_id = f"device_{device_mac}_radio_{radio_type}"
-                        if switch_id not in _SWITCHES:
+                        if switch_id not in tracked_entities:
                             switch = OmadaRadioSwitch(
                                 coordinator,
                                 api,
                                 device,
                                 radio_type
                             )
-                            _SWITCHES[switch_id] = switch
+                            tracked_entities[switch_id] = switch
                             new_switches.append(switch)
 
         if new_switches:
@@ -131,9 +150,74 @@ async def async_setup_entry(
     coordinator.async_add_listener(async_add_switches)
     async_add_switches()
 
+class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
+    """Switch to control client blocking status."""
+
+    def __init__(self, coordinator, api, client):
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._api = api
+        self._client = client
+        self._mac = standardize_mac(client['mac'])
+        client_name = client.get('name', self._mac)
+
+        self._attr_name = f"{client_name} Blocked"
+        self._attr_unique_id = f"client_{self._mac}_blocked"
+        self._attr_icon = "mdi:wifi-off"
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"client_{self._mac}")},
+            "name": client_name,
+            "manufacturer": client.get("manufacturer", "TP-Link"),
+            "model": "Omada Client",
+            "sw_version": client.get("os", "Unknown"),
+            "connections": {("mac", self._mac)}
+        }
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if client is blocked."""
+        for client in self.coordinator.data["clients"]:
+            if standardize_mac(client["mac"]) == self._mac:
+                return client.get("block", False)
+        return False
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Block the client."""
+        try:
+            success = await self.hass.async_add_executor_job(
+                self._api.block_client,
+                self._mac
+            )
+
+            if success:
+                await self.coordinator.async_request_refresh()
+            else:
+                _LOGGER.error("Failed to block client %s", self._mac)
+
+        except Exception as error:
+            _LOGGER.error("Error blocking client %s: %s", self._mac, str(error))
+            raise
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Unblock the client."""
+        try:
+            success = await self.hass.async_add_executor_job(
+                self._api.unblock_client,
+                self._mac
+            )
+
+            if success:
+                await self.coordinator.async_request_refresh()
+            else:
+                _LOGGER.error("Failed to unblock client %s", self._mac)
+
+        except Exception as error:
+            _LOGGER.error("Error unblocking client %s: %s", self._mac, str(error))
+            raise
 
 class OmadaACLRuleSwitch(OmadaCoordinatorEntity, SwitchEntity):
-    """Representation of an ACL rule switch."""
+    """Switch for ACL rule status."""
 
     def __init__(self, coordinator, api, rule, device_type, device_name):
         """Initialize the switch."""
@@ -147,7 +231,7 @@ class OmadaACLRuleSwitch(OmadaCoordinatorEntity, SwitchEntity):
 
         if device_type == 'gateway':
             model_name = 'Omada Gateway ACL Rule'
-        if device_type == 'switch':
+        elif device_type == 'switch':
             model_name = 'Omada Switch ACL Rule'
         else:
             model_name = 'Omada EAP ACL Rule'
@@ -390,6 +474,7 @@ class OmadaRadioSwitch(OmadaCoordinatorEntity, SwitchEntity):
 
         self._attr_name = f"{device_name} {radio_name}"
         self._attr_unique_id = f"device_{self._device_mac}_radio_{radio_type}"
+        self._attr_icon = "mdi:antenna"
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"device_{self._device_mac}")},
@@ -404,12 +489,6 @@ class OmadaRadioSwitch(OmadaCoordinatorEntity, SwitchEntity):
         """Return true if the radio is enabled."""
         device_data = self.coordinator.data.get("ap_data", {}).get(self._device_mac)
         _LOGGER.debug(f"is_on datas received for %s: %s", self._device_mac, device_data )
-        #if isinstance(device_data, list) and device_data:
-        #    device_data = device_data[0]
-        #elif not isinstance(device_data, dict):
-        #    return False
-
-        #setting_key = "radioSetting2g" if self._radio_type == "2g" else "radioSetting5g"
         setting_key = "radioSetting2g" if self._radio_type == "2g" else "radioSetting5g"
         return device_data.get(setting_key, {})
 
