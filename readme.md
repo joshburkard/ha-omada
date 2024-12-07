@@ -9,7 +9,12 @@ Adds Omada SDN Controller support to Home assistant. This integration requires [
 this features are already integrated:
 
 - Clients with a lot of sensors
-- Devices with a lot of sensors
+  - handling online and offline known clients
+  - blocking switch
+- Devices
+  - sensors
+  - switches for radio and ssid for access points
+  - select for LED Settings for access points
 - ACL Rules with switch
 - URL Filtering with switch
 

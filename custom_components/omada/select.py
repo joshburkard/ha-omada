@@ -4,6 +4,7 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_registry import RegistryEntryDisabler
 
 from .helpers import OmadaCoordinatorEntity
 from .const import DOMAIN

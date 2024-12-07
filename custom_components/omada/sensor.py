@@ -1,5 +1,4 @@
 """Sensor platform for Test HA Omada."""
-from homeassistant.helpers.entity import EntityCategory
 from datetime import datetime
 import logging
 from zoneinfo import ZoneInfo
@@ -13,6 +12,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_registry import (
+    async_get as er_async_get,
+    RegistryEntryDisabler
+)
 from homeassistant.const import (
     UnitOfDataRate,
     UnitOfTime,
@@ -22,12 +25,8 @@ from homeassistant.const import (
 )
 from homeassistant.util import dt as dt_util
 
-from homeassistant.helpers.entity_registry import (
-    async_get as er_async_get,
-    async_entries_for_config_entry
-)
-from .helpers import OmadaCoordinatorEntity, standardize_mac, is_valid_value
 from .const import DOMAIN
+from .helpers import OmadaCoordinatorEntity, standardize_mac, is_valid_value
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,29 +56,39 @@ TRAFFIC_TYPE_MAP = {
 }
 
 # Client sensor definitions tuple (class_name, entity_id, attribute, display_name)
+# Update CLIENT_SENSOR_DEFINITIONS in sensor.py
 CLIENT_SENSOR_DEFINITIONS = [
+    ("OmadaClientBaseSensor", "active", "active", "Active"),
+    ("OmadaClientBaseSensor", "channel", "channel", "Channel"),
+    ("OmadaClientSignalSensor", "rssi", "rssi", "RSSI"),
+    ("OmadaClientBaseSensor", "ssid", "ssid", "SSID"),
+    ("OmadaClientTimeSensor", "uptime", "uptime", "Uptime"),
+    ("OmadaClientBaseSensor", "wireless", "wireless", "Wireless"),
     ("OmadaClientBaseSensor", "gateway_name", "gatewayName", "Gateway Name"),
     ("OmadaClientBaseSensor", "ip_address", "ip", "IP Address"),
     ("OmadaClientBaseSensor", "mac_address", "mac", "MAC Address"),
-    ("OmadaClientBaseSensor", "wireless", "wireless", "Wireless"),
     ("OmadaClientBaseSensor", "network_name", "networkName", "Network Name"),
-    ("OmadaClientBaseSensor", "ssid", "ssid", "SSID"),
     ("OmadaClientBaseSensor", "ap_name", "apName", "AP Name"),
     ("OmadaClientBaseSensor", "ap_mac", "apMac", "AP Mac"),
-    ("OmadaClientBaseSensor", "channel", "channel", "Channel"),
     ("OmadaClientSignalSensor", "signal_level", "signalLevel", "Signal Level"),
     ("OmadaClientSignalSensor", "signal_rank", "signalRank", "Signal Rank"),
     ("OmadaClientWifiSensor", "wifi_mode", "wifiMode", "WiFi Mode"),
     ("OmadaClientRadioSensor", "radio_id", "radioId", "Radio Type"),
     ("OmadaClientSpeedSensor", "rx_rate", "rxRate", "RX Rate"),
     ("OmadaClientSpeedSensor", "tx_rate", "txRate", "TX Rate"),
-    ("OmadaClientSignalSensor", "rssi", "rssi", "RSSI"),
-    ("OmadaClientTimeSensor", "uptime", "uptime", "Uptime"),
     ("OmadaClientTrafficSensor", "traffic_up", "trafficUp", "Traffic Up"),
     ("OmadaClientTrafficSensor", "traffic_down", "trafficDown", "Traffic Down"),
     ("OmadaClientPacketSensor", "down_packet", "downPacket", "Packets Down"),
     ("OmadaClientPacketSensor", "up_packet", "upPacket", "Packets Up")
 ]
+
+# Define always-enabled sensors
+ALWAYS_ENABLED_SENSORS = {
+    "active", "channel", "rssi", "ssid", "uptime", "wireless",
+    "gateway_name", "ip_address", "mac_address", "network_name",
+    "ap_name", "ap_mac", "signal_level", "signal_rank", "wifi_mode",
+    "radio_id", "rx_rate", "tx_rate"
+}
 
 # Device sensor definitions tuple (class_name, entity_id, attribute, display_name)
 DEVICE_SENSOR_DEFINITIONS = [
@@ -118,7 +127,7 @@ DEVICE_LICENSE_STATUS_MAP = {
     3: "Active"
 }
 
-# URL Filter sensor definitions tuple (class_name, entity_id, attribute, display_name)
+# URL Filter source type mappings
 URL_FILTER_SENSOR_DEFINITIONS = [
     ("OmadaURLFilterSensor", "policy", "policy", "Policy"),
     ("OmadaURLFilterSensor", "source_type", "sourceType", "Source Type"),
@@ -171,12 +180,12 @@ URL_FILTER_MODE_MAP = {
     1: "Keyword"
 }
 
-# Add policy mapping
 POLICY_MAP = {
     0: "Deny",
     1: "Permit"
 }
 
+# Radio Type mappings
 RADIO_TYPE_MAP = {
     0: "2.4 GHz",
     1: "5 GHz(1)",
@@ -184,6 +193,7 @@ RADIO_TYPE_MAP = {
     3: "6 GHz"
 }
 
+# WiFi Mode mappings
 WIFI_MODE_MAP = {
     0: "11a",
     1: "11b",
@@ -217,7 +227,7 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
         # Set up device info
         if device_type == 'gateway':
             model_name = 'Omada Gateway ACL Rule'
-        if device_type == 'switch':
+        elif device_type == 'switch':
             model_name = 'Omada Switch ACL Rule'
         else:
             model_name = 'Omada EAP ACL Rule'
@@ -237,11 +247,8 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
         names = []
         type_value = int(type_value) if type_value is not None else None
 
-        _LOGGER.debug("Processing IDs: %s with type: %s", ids, type_value)
-
         if type_value == 0:  # Network
             networks = self.coordinator.data.get("networks", [])
-            _LOGGER.debug("Available networks: %s", networks)
             for id in ids:
                 for network in networks:
                     if network.get("id") == id:
@@ -250,24 +257,18 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
                 else:
                     names.append(f"Unknown Network ({id})")
 
-        elif type_value in [1,2]:  # IP Group or IP-Port Group
+        elif type_value in [1, 2]:  # IP Group or IP-Port Group
             ip_groups = self.coordinator.data.get("ip_groups", [])
-            _LOGGER.debug("Available IP groups: %s", ip_groups)
             for id in ids:
-                _LOGGER.debug("Looking for IP group with ID: %s", id)
                 for group in ip_groups:
-                    _LOGGER.debug("Checking group: %s", group)
                     if group.get("groupId") == id:
                         names.append(group.get("name", id))
-                        _LOGGER.debug("Found matching group: %s", group.get("name", id))
                         break
                 else:
-                    _LOGGER.debug("No matching group found for ID: %s", id)
                     names.append(f"Unknown Group ({id})")
 
         elif type_value == 4:  # SSID
             ssids = self.coordinator.data.get("ssids", [])
-            _LOGGER.debug("Available SSIDs: %s", ssids)
             for id in ids:
                 for ssid in ssids:
                     if ssid.get("id") == id:
@@ -276,7 +277,6 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
                 else:
                     names.append(f"Unknown SSID ({id})")
 
-        _LOGGER.debug("Final names list: %s", names)
         return ", ".join(names) if names else "Unknown"
 
     def _format_value(self, value):
@@ -344,25 +344,18 @@ class OmadaACLRuleSensor(CoordinatorEntity, SensorEntity):
         super()._handle_coordinator_update()
 
 class OmadaClientBaseSensor(CoordinatorEntity, SensorEntity):
-    """Base sensor for Omada client attributes."""
-
     def __init__(self, coordinator, client, entity_id, attribute, display_name):
-        """Initialize the sensor."""
         super().__init__(coordinator)
         self._client = client
         self._attribute = attribute
         self._display_name = display_name
-        self._last_value = None
         self._mac = standardize_mac(client['mac'])
+        self._last_value = None
 
-        # Set unique_id as combination of MAC and sensor type
         self._attr_unique_id = f"client_{self._mac}_{entity_id}"
-
-        # Set name as combination of client name and sensor display name
         client_name = client.get('name', self._mac)
         self._attr_name = f"{client_name} {display_name}"
 
-        # Set up device info
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"client_{self._mac}")},
             "name": client_name,
@@ -373,23 +366,6 @@ class OmadaClientBaseSensor(CoordinatorEntity, SensorEntity):
         }
 
     @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        client_found = False
-        current_value = None
-
-        for client in self.coordinator.data.get("clients", []):
-            if standardize_mac(client["mac"]) == self._mac:
-                client_found = True
-                current_value = client.get(self._attribute)
-                break
-
-        return (client_found and
-                self.coordinator.last_update_success and
-                current_value is not None and
-                (not isinstance(current_value, str) or current_value.strip() != ""))
-
-    @property
     def native_value(self):
         """Return the state of the sensor."""
         for client in self.coordinator.data.get("clients", []):
@@ -397,17 +373,16 @@ class OmadaClientBaseSensor(CoordinatorEntity, SensorEntity):
                 value = client.get(self._attribute)
                 if value is not None:
                     self._last_value = value
-                    return value
+                return value or self._last_value
         return self._last_value
 
     @property
-    def extra_state_attributes(self) -> dict:
-        """Return additional attributes about the sensor."""
-        return {
-            "attribute_name": self._attribute,
-            "mac_address": self._mac,
-            "entity_type": "client"
-        }
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return any(
+            standardize_mac(client["mac"]) == self._mac
+            for client in self.coordinator.data.get("clients", [])
+        )
 
 class OmadaClientSignalSensor(OmadaClientBaseSensor):
     """Sensor for signal-related attributes."""
@@ -415,30 +390,9 @@ class OmadaClientSignalSensor(OmadaClientBaseSensor):
     def __init__(self, coordinator, client, entity_id, attribute, display_name):
         """Initialize the sensor."""
         super().__init__(coordinator, client, entity_id, attribute, display_name)
-
-        if self._attribute in ["rssi", "signalLevel"]:
-            self._attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
-            self._attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        client_found = False
-        current_value = None
-        is_active = False
-
-        for client in self.coordinator.data.get("clients", []):
-            if standardize_mac(client["mac"]) == self._mac:
-                client_found = True
-                current_value = client.get(self._attribute)
-                is_active = client.get("active", False)
-                break
-
-        return (client_found and
-                self.coordinator.last_update_success and
-                current_value is not None and
-                is_active)
+        self._attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+        self._attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+        self._attr_state_class = SensorStateClass.MEASUREMENT
 
 class OmadaClientSpeedSensor(OmadaClientBaseSensor):
     """Sensor for speed-related attributes."""
@@ -449,25 +403,6 @@ class OmadaClientSpeedSensor(OmadaClientBaseSensor):
         self._attr_native_unit_of_measurement = UnitOfDataRate.MEGABITS_PER_SECOND
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        client_found = False
-        current_value = None
-        is_active = False
-
-        for client in self.coordinator.data.get("clients", []):
-            if standardize_mac(client["mac"]) == self._mac:
-                client_found = True
-                current_value = client.get(self._attribute)
-                is_active = client.get("active", False)
-                break
-
-        return (client_found and
-                self.coordinator.last_update_success and
-                current_value is not None and
-                is_active)
-
 class OmadaClientTrafficSensor(OmadaClientBaseSensor):
     """Sensor for traffic-related attributes."""
 
@@ -477,49 +412,6 @@ class OmadaClientTrafficSensor(OmadaClientBaseSensor):
         self._attr_native_unit_of_measurement = UnitOfDataRate.BYTES_PER_SECOND
         self._attr_state_class = SensorStateClass.MEASUREMENT
 
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        client_found = False
-        current_value = None
-        is_active = False
-
-        for client in self.coordinator.data.get("clients", []):
-            if standardize_mac(client["mac"]) == self._mac:
-                client_found = True
-                current_value = client.get(self._attribute)
-                is_active = client.get("active", False)
-                break
-
-        return (client_found and
-                self.coordinator.last_update_success and
-                current_value is not None and
-                is_active)
-
-class OmadaClientWifiSensor(OmadaClientBaseSensor):
-    """Sensor for WiFi mode."""
-
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        client_found = False
-        current_value = None
-        is_active = False
-
-        for client in self.coordinator.data.get("clients", []):
-            if standardize_mac(client["mac"]) == self._mac:
-                client_found = True
-                current_value = client.get(self._attribute)
-                is_active = client.get("active", False)
-                break
-
-        # Only available if client is active and has a valid WiFi mode
-        return (client_found and
-                self.coordinator.last_update_success and
-                current_value is not None and
-                is_active and
-                current_value in WIFI_MODE_MAP)
-
 class OmadaClientPacketSensor(OmadaClientBaseSensor):
     """Sensor for packet-related attributes."""
 
@@ -527,48 +419,6 @@ class OmadaClientPacketSensor(OmadaClientBaseSensor):
         """Initialize the sensor."""
         super().__init__(coordinator, client, entity_id, attribute, display_name)
         self._attr_state_class = SensorStateClass.TOTAL
-
-    @property
-    def state_class(self):
-        """Return the state class."""
-        return SensorStateClass.TOTAL
-
-class OmadaClientRadioSensor(OmadaClientBaseSensor):
-    """Sensor for radio type."""
-
-    def __init__(self, coordinator, client, entity_id, attribute, display_name):
-        """Initialize the sensor."""
-        super().__init__(coordinator, client, entity_id, attribute, display_name)
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC  # Fixed: Using proper enum value
-
-    @property
-    def native_value(self):
-        """Return the mapped radio type."""
-        for client in self.coordinator.data["clients"]:
-            if standardize_mac(client["mac"]) == self._mac:
-                radio = client.get(self._attribute)
-                self._last_value = RADIO_TYPE_MAP.get(radio, f"Unknown ({radio})")
-                return self._last_value
-        return self._last_value
-
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        client_found = False
-        current_value = None
-        is_active = False
-
-        for client in self.coordinator.data.get("clients", []):
-            if standardize_mac(client["mac"]) == self._mac:
-                client_found = True
-                current_value = client.get(self._attribute)
-                is_active = client.get("active", False)
-                break
-
-        return (client_found and
-                self.coordinator.last_update_success and
-                current_value is not None and
-                is_active)
 
 class OmadaClientTimeSensor(OmadaClientBaseSensor):
     """Sensor for time-related attributes."""
@@ -580,20 +430,34 @@ class OmadaClientTimeSensor(OmadaClientBaseSensor):
         self._attr_native_unit_of_measurement = UnitOfTime.SECONDS
         self._attr_state_class = SensorStateClass.TOTAL
 
-    @property
-    def device_class(self):
-        """Return the device class."""
-        return SensorDeviceClass.DURATION
+class OmadaClientWifiSensor(OmadaClientBaseSensor):
+    """Sensor for WiFi mode."""
 
     @property
-    def native_unit_of_measurement(self):
-        """Return the unit of measurement."""
-        return UnitOfTime.SECONDS
+    def native_value(self):
+        """Return the WiFi mode."""
+        for client in self.coordinator.data.get("clients", []):
+            if standardize_mac(client["mac"]) == self._mac:
+                mode = client.get(self._attribute)
+                return WIFI_MODE_MAP.get(mode, f"Unknown ({mode})")
+        return None
+
+class OmadaClientRadioSensor(OmadaClientBaseSensor):
+    """Sensor for radio type."""
+
+    def __init__(self, coordinator, client, entity_id, attribute, display_name):
+        """Initialize the sensor."""
+        super().__init__(coordinator, client, entity_id, attribute, display_name)
+        # self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
-    def state_class(self):
-        """Return the state class."""
-        return SensorStateClass.TOTAL
+    def native_value(self):
+        """Return the radio type."""
+        for client in self.coordinator.data.get("clients", []):
+            if standardize_mac(client["mac"]) == self._mac:
+                radio_id = client.get(self._attribute)
+                return RADIO_TYPE_MAP.get(radio_id, f"Unknown ({radio_id})")
+        return None
 
 class OmadaDeviceBasicSensor(CoordinatorEntity, SensorEntity):
     """Basic sensor for Omada device attributes."""
@@ -632,27 +496,13 @@ class OmadaDeviceBasicSensor(CoordinatorEntity, SensorEntity):
             return SensorStateClass.MEASUREMENT
         return None
 
-    def _format_value(self, value):
-        """Format the value based on attribute type."""
-        if self._attribute == "license_status":
-            try:
-                return DEVICE_LICENSE_STATUS_MAP.get(int(value), f"Unknown ({value})")
-            except (ValueError, TypeError):
-                return f"Unknown ({value})"
-        return value
-
     @property
     def native_value(self):
         """Return the state of the sensor."""
         for device in self.coordinator.data["devices"]:
             if device["mac"] == self._device["mac"]:
                 return device.get(self._attribute)
-
-            if device.get("id") == self._device.get("id"):
-                value = device.get(self._attribute)
-                self._last_value = self._format_value(value)
-                return self._last_value
-        return self._last_value
+        return None
 
     @property
     def available(self) -> bool:
@@ -723,26 +573,6 @@ class OmadaDeviceTrafficSensor(OmadaDeviceBasicSensor):
         """Return the state class."""
         return SensorStateClass.TOTAL
 
-def is_valid_value(value):
-    """Check if a value should be considered valid for display."""
-    if value is None:
-        return False
-
-    if isinstance(value, str):
-        # Check if string is empty or contains "Unknown"
-        return bool(value.strip()) and "Unknown" not in value
-
-    if isinstance(value, (int, float)):
-        # For numeric values, 0 is valid but None/null isn't
-        return True
-
-    # For boolean values, both True and False are valid
-    if isinstance(value, bool):
-        return True
-
-    # For all other types, check if the value exists
-    return bool(value)
-
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -750,13 +580,13 @@ async def async_setup_entry(
 ) -> None:
     """Set up the sensors."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
-    tracked_entities = {}
     entity_registry = er_async_get(hass)
 
     @callback
     def add_entities():
         """Add new entities."""
         new_entities = []
+        tracked_entities = coordinator.tracked_entities["sensor"]
 
         # Add device sensors
         if "devices" in coordinator.data:
@@ -780,54 +610,37 @@ async def async_setup_entry(
                     new_entities.append(entity)
 
         # Add client sensors
-        if "clients" in coordinator.data:
-            client_list = coordinator.data["clients"]
-            _LOGGER.debug("Processing %d clients for sensors", len(client_list))
+        # Only process active clients
+        active_clients = [
+            client for client in coordinator.data.get("clients", [])
+            if client.get("active", False)
+        ]
 
-            for client in client_list:
-                client_mac = client.get("mac")
-                if not client_mac:
+        for client in active_clients:
+            mac = standardize_mac(client.get("mac", ""))
+            if not mac:
+                continue
+
+            _LOGGER.debug("Processing active client for sensors: %s", mac)
+
+            for class_name, entity_id, attribute, display_name in CLIENT_SENSOR_DEFINITIONS:
+                entity_key = f"client_{mac}_{entity_id}"
+
+                # Skip if already tracking
+                if entity_key in tracked_entities:
                     continue
 
-                mac = standardize_mac(client_mac)
-                is_active = client.get("active", False)
-                _LOGGER.debug("Processing client %s (active: %s) for sensors", mac, is_active)
-
-                # Always create these basic sensors
-                basic_sensors = ["mac_address", "ip_address", "active"]
-
-                for class_name, entity_id, attribute, display_name in CLIENT_SENSOR_DEFINITIONS:
-                    entity_key = f"client_{mac}_{entity_id}"
-
-                    # Skip if entity already being tracked
-                    if entity_key in tracked_entities:
-                        continue
-
-                    # Process based on sensor type
-                    should_create = False
-                    value = client.get(attribute)
-
-                    if entity_id in basic_sensors:
-                        # Always create basic sensors
-                        should_create = True
-                    elif is_active:
-                        # Create other sensors only for active clients with valid data
-                        if class_name in ["OmadaClientWifiSensor", "OmadaClientRadioSensor"]:
-                            should_create = value is not None
-                        elif class_name in ["OmadaClientSignalSensor", "OmadaClientSpeedSensor", "OmadaClientTrafficSensor"]:
-                            should_create = value is not None and not (isinstance(value, (int, float)) and value == 0)
-                        else:
-                            should_create = value is not None
-
-                    if should_create:
-                        try:
-                            sensor_class = globals()[class_name]
-                            entity = sensor_class(coordinator, client, entity_id, attribute, display_name)
-                            tracked_entities[entity_key] = entity
-                            new_entities.append(entity)
-                            _LOGGER.debug("Created new sensor %s for client %s", entity_key, mac)
-                        except Exception as e:
-                            _LOGGER.error("Error creating sensor %s for client %s: %s", entity_key, mac, str(e))
+                # Create sensor if it has valid data
+                value = client.get(attribute)
+                if value is not None:
+                    try:
+                        sensor_class = globals()[class_name]
+                        entity = sensor_class(coordinator, client, entity_id, attribute, display_name)
+                        tracked_entities[entity_key] = entity
+                        new_entities.append(entity)
+                        _LOGGER.debug("Created sensor %s for client %s", entity_key, mac)
+                    except Exception as e:
+                        _LOGGER.error("Error creating sensor %s: %s", entity_key, str(e))
 
         # Add ACL rule sensors
         if "acl_rules" in coordinator.data:
@@ -915,6 +728,43 @@ async def async_setup_entry(
 
     coordinator.async_add_listener(add_entities)
     add_entities()
+
+def add_client_sensors(coordinator, client):
+    """Add sensors for a specific client."""
+    new_entities = []
+    mac = standardize_mac(client["mac"])
+
+    for class_name, entity_id, attribute, display_name in CLIENT_SENSOR_DEFINITIONS:
+        entity_key = f"client_{mac}_{entity_id}"
+
+        # Skip if already exists
+        if entity_key in coordinator.tracked_entities["sensor"]:
+            continue
+
+        # Check if sensor should be created
+        value = client.get(attribute)
+        if class_name in ["OmadaClientWifiSensor", "OmadaClientRadioSensor"]:
+            if not value:
+                continue
+        elif class_name in ["OmadaClientSignalSensor", "OmadaClientSpeedSensor", "OmadaClientTrafficSensor"]:
+            if not value or (isinstance(value, (int, float)) and value == 0):
+                continue
+        elif not is_valid_value(value):
+            continue
+
+        try:
+            sensor_class = globals()[class_name]
+            entity = sensor_class(coordinator, client, entity_id, attribute, display_name)
+            coordinator.tracked_entities["sensor"][entity_key] = entity
+            new_entities.append(entity)
+            _LOGGER.debug("Created sensor %s for client %s", entity_key, mac)
+        except Exception as e:
+            _LOGGER.error("Error creating sensor %s: %s", entity_key, str(e))
+
+    if new_entities:
+        coordinator.hass.async_add_job(coordinator.hass.config_entries.async_forward_entry_entities,
+                                     coordinator.config_entry_id, new_entities, "sensor")
+
 
 class OmadaURLFilterSensor(OmadaCoordinatorEntity, SensorEntity):
     """Sensor for URL filter attributes."""
