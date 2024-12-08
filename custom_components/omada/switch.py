@@ -174,6 +174,13 @@ class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
             "connections": {("mac", self._mac)}
         }
 
+    def _format_mac_for_api(self, mac: str) -> str:
+        """Format MAC address for API calls (00-00-00-00-00-00)."""
+        # Remove any existing separators and convert to uppercase
+        clean_mac = mac.replace(":", "").replace("-", "").upper()
+        # Insert hyphens every two characters
+        return "-".join(clean_mac[i:i+2] for i in range(0, 12, 2))
+
     @property
     def is_on(self) -> bool:
         """Return true if client is blocked."""
@@ -185,15 +192,17 @@ class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Block the client."""
         try:
+            # Format MAC address for API call
+            api_mac = self._format_mac_for_api(self._mac)
             success = await self.hass.async_add_executor_job(
                 self._api.block_client,
-                self._mac
+                api_mac
             )
 
             if success:
                 await self.coordinator.async_request_refresh()
             else:
-                _LOGGER.error("Failed to block client %s", self._mac)
+                _LOGGER.error("Failed to block client %s", api_mac)
 
         except Exception as error:
             _LOGGER.error("Error blocking client %s: %s", self._mac, str(error))
@@ -202,15 +211,17 @@ class OmadaClientBlockSwitch(OmadaCoordinatorEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Unblock the client."""
         try:
+            # Format MAC address for API call
+            api_mac = self._format_mac_for_api(self._mac)
             success = await self.hass.async_add_executor_job(
                 self._api.unblock_client,
-                self._mac
+                api_mac
             )
 
             if success:
                 await self.coordinator.async_request_refresh()
             else:
-                _LOGGER.error("Failed to unblock client %s", self._mac)
+                _LOGGER.error("Failed to unblock client %s", api_mac)
 
         except Exception as error:
             _LOGGER.error("Error unblocking client %s: %s", self._mac, str(error))
