@@ -284,7 +284,7 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
         if unique_id.startswith("client_"):
             mac = standardize_mac(unique_id.split("_")[1])
             if mac not in current_client_macs:
-                _LOGGER.info("Removing entity for non-existent client: %s", entity.entity_id)
+                _LOGGER.debug("Removing entity for non-existent client: %s", entity.entity_id)
                 should_remove = True
         # Handle device trackers separately
         elif unique_id.startswith(f"{entry_id}_tracker_"):
@@ -319,7 +319,7 @@ async def cleanup_stale_entities(hass: HomeAssistant, entry_id: str, data: dict)
 
     # Remove stale entities
     for entity_id in entities_to_remove:
-        _LOGGER.info("Removing entity: %s", entity_id)
+        _LOGGER.debug("Removing entity: %s", entity_id)
         entity_registry.async_remove(entity_id)
 
     # Clean up devices without entities
